@@ -30,28 +30,33 @@ Uma API profissional para envio de mensagens WhatsApp construída em Go, com arq
 ### Usando Go
 
 1. Clone o repositório:
+
 ```bash
 git clone https://github.com/marcosoleniuk/api-bot-whats-golang.git
 cd api-bot-whats-golang
 ```
 
 2. Copie o arquivo de exemplo de variáveis de ambiente:
+
 ```bash
 cp .env.example .env
 ```
 
 3. Edite o arquivo `.env` e configure suas credenciais:
+
 ```env
 API_TOKEN=seu-token-secreto-aqui
 SESSION_KEY=sua-chave-de-sessao-aqui
 ```
 
 4. Instale as dependências:
+
 ```bash
 go mod download
 ```
 
 5. Execute a aplicação:
+
 ```bash
 go run cmd/api/main.go
 ```
@@ -59,23 +64,33 @@ go run cmd/api/main.go
 ### Usando Docker
 
 1. Clone o repositório:
+
 ```bash
 git clone https://github.com/marcosoleniuk/api-bot-whats-golang.git
 cd api-bot-whats-golang
 ```
 
 2. Copie e configure o `.env`:
+
 ```bash
 cp .env.example .env
-# Edite o arquivo .env com suas configurações
 ```
 
+**⚠️ IMPORTANTE:** Edite o arquivo `.env` e configure pelo menos:
+
+- `API_TOKEN` - Token de autenticação da API (obrigatório)
+- `SESSION_KEY` - Chave de sessão (obrigatório)
+
+Você pode gerar tokens seguros em: https://www.strongdm.com/tools/api-key-generator
+
 3. Execute com Docker Compose:
+
 ```bash
 docker-compose up -d
 ```
 
 4. Veja os logs:
+
 ```bash
 docker-compose logs -f
 ```
@@ -101,6 +116,7 @@ GET /health
 ```
 
 **Resposta:**
+
 ```json
 {
   "status": "healthy",
@@ -122,6 +138,7 @@ POST /api/v1/messages/text
 ```
 
 **Headers:**
+
 ```
 apitoken: seu-api-token
 SESSIONKEY: sua-session-key
@@ -129,6 +146,7 @@ Content-Type: application/json
 ```
 
 **Body:**
+
 ```json
 {
   "number": "5511999999999",
@@ -137,6 +155,7 @@ Content-Type: application/json
 ```
 
 **Resposta:**
+
 ```json
 {
   "status": "success",
@@ -157,6 +176,7 @@ POST /api/v1/messages/media
 ```
 
 **Headers:**
+
 ```
 apitoken: seu-api-token
 SESSIONKEY: sua-session-key
@@ -164,6 +184,7 @@ Content-Type: application/json
 ```
 
 **Body (com URL):**
+
 ```json
 {
   "number": "5511999999999",
@@ -173,6 +194,7 @@ Content-Type: application/json
 ```
 
 **Body (com Base64):**
+
 ```json
 {
   "number": "5511999999999",
@@ -183,6 +205,7 @@ Content-Type: application/json
 ```
 
 **Resposta:**
+
 ```json
 {
   "status": "success",
@@ -209,21 +232,21 @@ POST /sendMedia
 
 Todas as configurações são feitas através de variáveis de ambiente:
 
-| Variável | Descrição | Padrão |
-|----------|-----------|--------|
-| `SERVER_PORT` | Porta do servidor HTTP | `8080` |
-| `SERVER_READ_TIMEOUT` | Timeout de leitura | `15s` |
-| `SERVER_WRITE_TIMEOUT` | Timeout de escrita | `15s` |
-| `SERVER_IDLE_TIMEOUT` | Timeout de idle | `60s` |
-| `SERVER_SHUTDOWN_TIMEOUT` | Timeout de shutdown | `10s` |
-| `MAX_UPLOAD_SIZE` | Tamanho máximo de upload (bytes) | `52428800` (50MB) |
-| `WHATSAPP_SESSION_KEY` | Chave da sessão WhatsApp | `default-session` |
-| `WHATSAPP_DEFAULT_COUNTRY` | Código do país padrão | `55` |
-| `WHATSAPP_QR_GENERATE` | Gerar QR Code no terminal | `true` |
-| `API_TOKEN` | Token de autenticação da API | **OBRIGATÓRIO** |
-| `SESSION_KEY` | Chave de sessão | **OBRIGATÓRIO** |
-| `DB_DRIVER` | Driver do banco de dados | `sqlite3` |
-| `DB_DSN` | DSN do banco de dados | `file:whatsapp.db?_foreign_keys=on` |
+| Variável                   | Descrição                        | Padrão                              |
+| -------------------------- | -------------------------------- | ----------------------------------- |
+| `SERVER_PORT`              | Porta do servidor HTTP           | `8080`                              |
+| `SERVER_READ_TIMEOUT`      | Timeout de leitura               | `15s`                               |
+| `SERVER_WRITE_TIMEOUT`     | Timeout de escrita               | `15s`                               |
+| `SERVER_IDLE_TIMEOUT`      | Timeout de idle                  | `60s`                               |
+| `SERVER_SHUTDOWN_TIMEOUT`  | Timeout de shutdown              | `10s`                               |
+| `MAX_UPLOAD_SIZE`          | Tamanho máximo de upload (bytes) | `52428800` (50MB)                   |
+| `WHATSAPP_SESSION_KEY`     | Chave da sessão WhatsApp         | `default-session`                   |
+| `WHATSAPP_DEFAULT_COUNTRY` | Código do país padrão            | `55`                                |
+| `WHATSAPP_QR_GENERATE`     | Gerar QR Code no terminal        | `true`                              |
+| `API_TOKEN`                | Token de autenticação da API     | **OBRIGATÓRIO**                     |
+| `SESSION_KEY`              | Chave de sessão                  | **OBRIGATÓRIO**                     |
+| `DB_DRIVER`                | Driver do banco de dados         | `sqlite3`                           |
+| `DB_DSN`                   | DSN do banco de dados            | `file:whatsapp.db?_foreign_keys=on` |
 
 ## 🏗️ Estrutura do Projeto
 
@@ -275,6 +298,7 @@ curl http://localhost:8080/health
 ```
 
 Este endpoint verifica:
+
 - Status da conexão WhatsApp
 - Status do banco de dados
 - Tempo de uptime
@@ -297,6 +321,7 @@ Todos os erros seguem um formato padronizado:
 ```
 
 Códigos de erro comuns:
+
 - `AUTH_INVALID`: Credenciais inválidas
 - `INVALID_JSON`: JSON malformado
 - `VALIDATION_ERROR`: Erro de validação de dados
@@ -358,12 +383,14 @@ docker-compose up -d --build
 ## 📝 Logs
 
 Os logs são estruturados e incluem:
+
 - Timestamp
 - Nível (DEBUG, INFO, WARN, ERROR, FATAL)
 - Módulo
 - Mensagem
 
 Exemplo:
+
 ```
 2026/01/29 10:30:00 [API] [INFO] Configuration loaded successfully
 2026/01/29 10:30:01 [WhatsApp] [INFO] Successfully connected to WhatsApp

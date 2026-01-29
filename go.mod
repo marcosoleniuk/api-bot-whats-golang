@@ -3,6 +3,7 @@ module boot-whatsapp-golang
 go 1.25
 
 require (
+	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-sqlite3 v1.14.33
 	github.com/mdp/qrterminal/v3 v3.2.1
 	go.mau.fi/whatsmeow v0.0.0-20260126173513-4dbbef8d4d4a
