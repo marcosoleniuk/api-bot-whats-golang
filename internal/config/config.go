@@ -7,7 +7,6 @@ import (
 	"time"
 )
 
-// Config holds all configuration for the application
 type Config struct {
 	Server   ServerConfig
 	WhatsApp WhatsAppConfig
@@ -15,7 +14,6 @@ type Config struct {
 	Database DatabaseConfig
 }
 
-// ServerConfig holds server configuration
 type ServerConfig struct {
 	Port            string
 	ReadTimeout     time.Duration
@@ -25,27 +23,23 @@ type ServerConfig struct {
 	MaxUploadSize   int64
 }
 
-// WhatsAppConfig holds WhatsApp configuration
 type WhatsAppConfig struct {
-	SessionKey      string
-	DefaultCountry  string
-	QRCodeGenerate  bool
-	ReconnectDelay  time.Duration
+	SessionKey     string
+	DefaultCountry string
+	QRCodeGenerate bool
+	ReconnectDelay time.Duration
 }
 
-// AuthConfig holds authentication configuration
 type AuthConfig struct {
 	APIToken   string
 	SessionKey string
 }
 
-// DatabaseConfig holds database configuration
 type DatabaseConfig struct {
 	Driver string
 	DSN    string
 }
 
-// Load loads configuration from environment variables
 func Load() (*Config, error) {
 	cfg := &Config{
 		Server: ServerConfig{
@@ -72,7 +66,6 @@ func Load() (*Config, error) {
 		},
 	}
 
-	// Validate required fields
 	if cfg.Auth.APIToken == "" {
 		return nil, fmt.Errorf("API_TOKEN is required")
 	}
@@ -83,7 +76,6 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// getEnv retrieves an environment variable or returns a default value
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
@@ -91,7 +83,6 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-// getInt64Env retrieves an int64 environment variable or returns a default value
 func getInt64Env(key string, defaultValue int64) int64 {
 	if value := os.Getenv(key); value != "" {
 		if intValue, err := strconv.ParseInt(value, 10, 64); err == nil {
@@ -101,7 +92,6 @@ func getInt64Env(key string, defaultValue int64) int64 {
 	return defaultValue
 }
 
-// getBoolEnv retrieves a boolean environment variable or returns a default value
 func getBoolEnv(key string, defaultValue bool) bool {
 	if value := os.Getenv(key); value != "" {
 		if boolValue, err := strconv.ParseBool(value); err == nil {
@@ -111,7 +101,6 @@ func getBoolEnv(key string, defaultValue bool) bool {
 	return defaultValue
 }
 
-// getDurationEnv retrieves a duration environment variable or returns a default value
 func getDurationEnv(key string, defaultValue time.Duration) time.Duration {
 	if value := os.Getenv(key); value != "" {
 		if duration, err := time.ParseDuration(value); err == nil {

@@ -2,13 +2,11 @@ package models
 
 import "time"
 
-// MessageRequest represents a text message request
 type MessageRequest struct {
 	Number string `json:"number" validate:"required"`
 	Text   string `json:"text" validate:"required"`
 }
 
-// MediaRequest represents a media message request
 type MediaRequest struct {
 	Number      string `json:"number" validate:"required"`
 	Caption     string `json:"caption"`
@@ -17,7 +15,6 @@ type MediaRequest struct {
 	MimeType    string `json:"mime_type"`
 }
 
-// APIResponse represents a standard API response
 type APIResponse struct {
 	Status    string      `json:"status"`
 	Message   string      `json:"message"`
@@ -25,7 +22,6 @@ type APIResponse struct {
 	Timestamp time.Time   `json:"timestamp"`
 }
 
-// ErrorResponse represents an error response
 type ErrorResponse struct {
 	Status    string            `json:"status"`
 	Message   string            `json:"message"`
@@ -34,7 +30,6 @@ type ErrorResponse struct {
 	Timestamp time.Time         `json:"timestamp"`
 }
 
-// HealthResponse represents a health check response
 type HealthResponse struct {
 	Status    string            `json:"status"`
 	Service   string            `json:"service"`
@@ -44,7 +39,6 @@ type HealthResponse struct {
 	Checks    map[string]string `json:"checks"`
 }
 
-// MessageSent represents a successful message send response
 type MessageSent struct {
 	MessageID string    `json:"message_id,omitempty"`
 	Recipient string    `json:"recipient"`
@@ -52,7 +46,6 @@ type MessageSent struct {
 	SentAt    time.Time `json:"sent_at"`
 }
 
-// NewSuccessResponse creates a new success response
 func NewSuccessResponse(message string, data interface{}) *APIResponse {
 	return &APIResponse{
 		Status:    "success",
@@ -62,7 +55,6 @@ func NewSuccessResponse(message string, data interface{}) *APIResponse {
 	}
 }
 
-// NewErrorResponse creates a new error response
 func NewErrorResponse(message, code string, details map[string]string) *ErrorResponse {
 	return &ErrorResponse{
 		Status:    "error",
