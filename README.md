@@ -436,4 +436,4 @@ Se você encontrar algum problema ou tiver dúvidas:
 
 ---
 
-**Desenvolvido com usando Go**
+**Desenvolvido usando Go**
