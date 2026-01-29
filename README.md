@@ -1,4 +1,4 @@
-# WhatsApp Bot API - Professional Edition
+# WhatsApp Bot API MOleniuk
 
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -31,8 +31,8 @@ Uma API profissional para envio de mensagens WhatsApp construída em Go, com arq
 
 1. Clone o repositório:
 ```bash
-git clone <repository-url>
-cd boot-whatsapp-golang
+git clone https://github.com/marcosoleniuk/api-bot-whats-golang.git
+cd api-bot-whats-golang
 ```
 
 2. Copie o arquivo de exemplo de variáveis de ambiente:
@@ -60,8 +60,8 @@ go run cmd/api/main.go
 
 1. Clone o repositório:
 ```bash
-git clone <repository-url>
-cd boot-whatsapp-golang
+git clone https://github.com/marcosoleniuk/api-bot-whats-golang.git
+cd api-bot-whats-golang
 ```
 
 2. Copie e configure o `.env`:
@@ -400,4 +400,4 @@ Se você encontrar algum problema ou tiver dúvidas:
 
 ---
 
-**Desenvolvido com ❤️ usando Go**
+**Desenvolvido com usando Go**
