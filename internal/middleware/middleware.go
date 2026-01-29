@@ -1,0 +1,114 @@
+package middleware
+
+import (
+	"boot-whatsapp-golang/internal/config"
+	"boot-whatsapp-golang/internal/models"
+	"boot-whatsapp-golang/pkg/logger"
+	"encoding/json"
+	"net/http"
+	"time"
+)
+
+// AuthMiddleware validates API token and session key
+func AuthMiddleware(cfg *config.Config, log *logger.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			apiToken := r.Header.Get("apitoken")
+			sessionKey := r.Header.Get("SESSIONKEY")
+
+			if apiToken != cfg.Auth.APIToken || sessionKey != cfg.Auth.SessionKey {
+				log.Warnf("Unauthorized access attempt from %s - Token: %s, SessionKey: %s", 
+					r.RemoteAddr, apiToken, sessionKey)
+				
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(w).Encode(models.NewErrorResponse(
+					"Invalid authentication credentials",
+					"AUTH_INVALID",
+					nil,
+				))
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RecoveryMiddleware recovers from panics
+func RecoveryMiddleware(log *logger.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if err := recover(); err != nil {
+					log.Errorf("Panic recovered: %v", err)
+					
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					json.NewEncoder(w).Encode(models.NewErrorResponse(
+						"Internal server error",
+						"INTERNAL_ERROR",
+						nil,
+					))
+				}
+			}()
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// LoggingMiddleware logs HTTP requests
+func LoggingMiddleware(log *logger.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			
+			// Create a custom response writer to capture status code
+			rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+			
+			next.ServeHTTP(rw, r)
+			
+			duration := time.Since(start)
+			log.Infof("%s %s %d %v", r.Method, r.URL.Path, rw.statusCode, duration)
+		})
+	}
+}
+
+// responseWriter wraps http.ResponseWriter to capture status code
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.statusCode = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+// CORSMiddleware adds CORS headers
+func CORSMiddleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, apitoken, SESSIONKEY")
+			
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// ContentTypeMiddleware ensures JSON content type
+func ContentTypeMiddleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			next.ServeHTTP(w, r)
+		})
+	}
+}
