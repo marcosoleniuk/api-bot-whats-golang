@@ -427,4 +427,13 @@ Se você encontrar algum problema ou tiver dúvidas:
 
 ---
 
+## 👨‍💻 Autor
+
+**Marcos Oleniuk**
+
+- 📧 Email: marcos@moleniuk.com
+- 💬 WhatsApp: [+55 44 9 8809-9508(https://wa.me/5544988099508)
+
+---
+
 **Desenvolvido com usando Go**
