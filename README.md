@@ -1,7 +1,7 @@
 # WhatsApp Bot API Multi Sessões - MOleniuk
 
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go)](https://golang.org)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat&logo=docker)](https://www.docker.com/)
 
 API REST em Go para gerenciar múltiplas sessões do WhatsApp com isolamento por `SESSIONKEY`, suporte a Docker e banco SQLite/PostgreSQL.
