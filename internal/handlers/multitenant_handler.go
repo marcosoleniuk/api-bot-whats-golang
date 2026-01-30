@@ -7,22 +7,47 @@ import (
 	"boot-whatsapp-golang/pkg/logger"
 	"boot-whatsapp-golang/pkg/validator"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 )
 
-type Handler struct {
-	whatsappService *services.WhatsAppService
+type MultiTenantHandler struct {
+	whatsappService *services.MultiTenantWhatsAppService
 	config          *config.Config
 	logger          *logger.Logger
 	startTime       time.Time
 }
 
-func (h *Handler) SendTextMessage(w http.ResponseWriter, r *http.Request) {
+func NewMultiTenantHandler(whatsappService *services.MultiTenantWhatsAppService, cfg *config.Config, log *logger.Logger) *MultiTenantHandler {
+	return &MultiTenantHandler{
+		whatsappService: whatsappService,
+		config:          cfg,
+		logger:          log,
+		startTime:       time.Now(),
+	}
+}
+
+func (h *MultiTenantHandler) SendTextMessage(w http.ResponseWriter, r *http.Request) {
+	sessionKey := r.Header.Get("X-WhatsApp-Session-Key")
+	if sessionKey == "" {
+		h.logger.Warn("whatsappSessionKey ausente no header")
+		w.WriteHeader(http.StatusBadRequest)
+		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
+			"Header X-WhatsApp-Session-Key é obrigatório",
+			"MISSING_SESSION_KEY",
+			nil,
+		))
+		if err != nil {
+			return
+		}
+		return
+	}
+
 	var req models.MessageRequest
 
 	if err := validator.ValidateJSON(r, &req); err != nil {
-		h.logger.Warnf("JSON inválido na requisição de mensagem de texto: %v", err)
+		h.logger.Warnf("[%s] JSON inválido na requisição de mensagem de texto: %v", sessionKey, err)
 		w.WriteHeader(http.StatusBadRequest)
 		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
 			"Corpo da requisição inválido",
@@ -36,7 +61,7 @@ func (h *Handler) SendTextMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Number == "" || req.Text == "" {
-		h.logger.Warn("Campos obrigatórios ausentes na requisição de mensagem de texto")
+		h.logger.Warnf("[%s] Campos obrigatórios ausentes na requisição de mensagem de texto", sessionKey)
 		w.WriteHeader(http.StatusBadRequest)
 		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
 			"Campos obrigatórios ausentes",
@@ -53,10 +78,10 @@ func (h *Handler) SendTextMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := validator.ValidatePhoneNumber(req.Number); err != nil {
-		h.logger.Warnf("Invalid phone number: %v", err)
+		h.logger.Warnf("[%s] Número de telefone inválido: %v", sessionKey, err)
 		w.WriteHeader(http.StatusBadRequest)
 		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
-			"Invalid phone number format",
+			"Formato de número de telefone inválido",
 			"INVALID_PHONE",
 			map[string]string{"error": err.Error()},
 		))
@@ -66,8 +91,8 @@ func (h *Handler) SendTextMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.whatsappService.SendTextMessage(req.Number, req.Text); err != nil {
-		h.logger.Errorf("Falha ao enviar mensagem de texto para %s: %v", req.Number, err)
+	if err := h.whatsappService.SendTextMessage(sessionKey, req.Number, req.Text); err != nil {
+		h.logger.Errorf("[%s] Falha ao enviar mensagem de texto para %s: %v", sessionKey, req.Number, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
 			"Falha ao enviar mensagem",
@@ -96,13 +121,26 @@ func (h *Handler) SendTextMessage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) SendMediaMessage(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, h.config.Server.MaxUploadSize)
+func (h *MultiTenantHandler) SendMediaMessage(w http.ResponseWriter, r *http.Request) {
+	sessionKey := r.Header.Get("X-WhatsApp-Session-Key")
+	if sessionKey == "" {
+		h.logger.Warn("whatsappSessionKey ausente no header")
+		w.WriteHeader(http.StatusBadRequest)
+		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
+			"Header X-WhatsApp-Session-Key é obrigatório",
+			"MISSING_SESSION_KEY",
+			nil,
+		))
+		if err != nil {
+			return
+		}
+		return
+	}
 
 	var req models.MediaRequest
 
 	if err := validator.ValidateJSON(r, &req); err != nil {
-		h.logger.Warnf("JSON inválido na requisição de mensagem de mídia: %v", err)
+		h.logger.Warnf("[%s] JSON inválido na requisição de mensagem de mídia: %v", sessionKey, err)
 		w.WriteHeader(http.StatusBadRequest)
 		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
 			"Corpo da requisição inválido",
@@ -116,7 +154,7 @@ func (h *Handler) SendMediaMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Number == "" {
-		h.logger.Warn("Número ausente na requisição de mensagem de mídia")
+		h.logger.Warnf("[%s] Número ausente na requisição de mensagem de mídia", sessionKey)
 		w.WriteHeader(http.StatusBadRequest)
 		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
 			"Campo obrigatório ausente: número",
@@ -130,7 +168,7 @@ func (h *Handler) SendMediaMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.MediaURL == "" && req.MediaBase64 == "" {
-		h.logger.Warn("Fonte de mídia ausente na requisição de mensagem de mídia")
+		h.logger.Warnf("[%s] Fonte de mídia ausente na requisição de mensagem de mídia", sessionKey)
 		w.WriteHeader(http.StatusBadRequest)
 		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
 			"É necessário fornecer media_url ou media_base64",
@@ -147,7 +185,7 @@ func (h *Handler) SendMediaMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.MediaBase64 != "" && req.MimeType == "" {
-		h.logger.Warn("mime_type ausente para mídia base64")
+		h.logger.Warnf("[%s] mime_type ausente para mídia base64", sessionKey)
 		w.WriteHeader(http.StatusBadRequest)
 		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
 			"mime_type é obrigatório ao usar media_base64",
@@ -161,10 +199,10 @@ func (h *Handler) SendMediaMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := validator.ValidatePhoneNumber(req.Number); err != nil {
-		h.logger.Warnf("Invalid phone number: %v", err)
+		h.logger.Warnf("[%s] Número de telefone inválido: %v", sessionKey, err)
 		w.WriteHeader(http.StatusBadRequest)
 		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
-			"Invalid phone number format",
+			"Formato de número de telefone inválido",
 			"INVALID_PHONE",
 			map[string]string{"error": err.Error()},
 		))
@@ -174,8 +212,8 @@ func (h *Handler) SendMediaMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.whatsappService.SendMediaMessage(req.Number, req.Caption, req.MediaURL, req.MediaBase64, req.MimeType); err != nil {
-		h.logger.Errorf("Falha ao enviar mensagem de mídia para %s: %v", req.Number, err)
+	if err := h.whatsappService.SendMediaMessage(sessionKey, req.Number, req.Caption, req.MediaURL, req.MediaBase64, req.MimeType); err != nil {
+		h.logger.Errorf("[%s] Falha ao enviar mensagem de mídia para %s: %v", sessionKey, req.Number, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
 			"Falha ao enviar mensagem de mídia",
@@ -204,40 +242,44 @@ func (h *Handler) SendMediaMessage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) HealthCheck(w http.ResponseWriter) {
+func (h *MultiTenantHandler) Health(w http.ResponseWriter, r *http.Request) {
 	uptime := time.Since(h.startTime)
 
-	checks := map[string]string{
-		"whatsapp": "disconnected",
-		"database": "ok",
+	sessions, err := h.whatsappService.ListSessions()
+	sessionsCount := "0"
+	connectedCount := "0"
+	if err == nil {
+		sessionsCount = fmt.Sprintf("%d", len(sessions))
+		connected := 0
+		for _, s := range sessions {
+			if s.Status == models.SessionStatusConnected {
+				connected++
+			}
+		}
+		connectedCount = fmt.Sprintf("%d", connected)
 	}
 
-	if h.whatsappService.IsConnected() {
-		checks["whatsapp"] = "connected"
-	}
-
-	status := "healthy"
-	if checks["whatsapp"] == "disconnected" {
-		status = "degraded"
-	}
-
-	response := models.HealthResponse{
-		Status:    status,
-		Service:   "WhatsApp Bot API - Multi Sessões MOleniuk",
+	health := models.HealthResponse{
+		Status:    "healthy",
+		Service:   "WhatsApp Bot API (Multi Sessões)",
 		Version:   "2.0.0",
 		Uptime:    uptime.String(),
 		Timestamp: time.Now(),
-		Checks:    checks,
+		Checks: map[string]string{
+			"api":                "ok",
+			"total_sessions":     sessionsCount,
+			"connected_sessions": connectedCount,
+		},
 	}
 
 	w.WriteHeader(http.StatusOK)
-	err := json.NewEncoder(w).Encode(response)
+	err = json.NewEncoder(w).Encode(health)
 	if err != nil {
 		return
 	}
 }
 
-func (h *Handler) NotFound(w http.ResponseWriter, r *http.Request) {
+func (h *MultiTenantHandler) NotFound(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 	err := json.NewEncoder(w).Encode(models.NewErrorResponse(
 		"Endpoint não encontrado",
@@ -249,7 +291,7 @@ func (h *Handler) NotFound(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) MethodNotAllowed(w http.ResponseWriter, r *http.Request) {
+func (h *MultiTenantHandler) MethodNotAllowed(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusMethodNotAllowed)
 	err := json.NewEncoder(w).Encode(models.NewErrorResponse(
 		"Método não permitido",

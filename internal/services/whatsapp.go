@@ -16,44 +16,18 @@ import (
 
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
-	waProto "go.mau.fi/whatsmeow/binary/proto"
-	"go.mau.fi/whatsmeow/store/sqlstore"
+	"go.mau.fi/whatsmeow/proto/waE2E"
+	_ "go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"google.golang.org/protobuf/proto"
 )
 
-// WhatsAppService handles WhatsApp operations
 type WhatsAppService struct {
 	client *whatsmeow.Client
 	config *config.Config
 	logger *logger.Logger
 }
 
-// NewWhatsAppService creates a new WhatsApp service instance
-func NewWhatsAppService(cfg *config.Config, log *logger.Logger) (*WhatsAppService, error) {
-	waLogger := logger.NewWhatsAppLogger("[WhatsApp] ", logger.INFO)
-	
-	ctx := context.Background()
-	container, err := sqlstore.New(ctx, cfg.Database.Driver, cfg.Database.DSN, waLogger)
-	if err != nil {
-		return nil, fmt.Errorf("falha ao inicializar banco de dados: %w", err)
-	}
-
-	deviceStore, err := container.GetFirstDevice(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("falha ao obter dispositivo: %w", err)
-	}
-
-	client := whatsmeow.NewClient(deviceStore, waLogger)
-	
-	return &WhatsAppService{
-		client: client,
-		config: cfg,
-		logger: log,
-	}, nil
-}
-
-// Connect establishes connection to WhatsApp
 func (s *WhatsAppService) Connect() error {
 	if s.client.IsConnected() {
 		s.logger.Info("Já conectado ao WhatsApp")
@@ -61,15 +35,14 @@ func (s *WhatsAppService) Connect() error {
 	}
 
 	if s.client.Store.ID == nil {
-		// First time connection - needs QR code
 		qrChan, _ := s.client.GetQRChannel(context.Background())
-		
+
 		if err := s.client.Connect(); err != nil {
 			return fmt.Errorf("falha ao conectar: %w", err)
 		}
 
 		s.logger.Info("Aguardando leitura do QR Code...")
-		
+
 		for evt := range qrChan {
 			if evt.Event == "code" {
 				if s.config.WhatsApp.QRCodeGenerate {
@@ -82,10 +55,9 @@ func (s *WhatsAppService) Connect() error {
 				s.logger.Infof("Evento de login: %s", evt.Event)
 			}
 		}
-		
+
 		s.logger.Info("Conectado ao WhatsApp com sucesso")
 	} else {
-		// Reconnecting with existing session
 		if err := s.client.Connect(); err != nil {
 			return fmt.Errorf("falha ao reconectar: %w", err)
 		}
@@ -95,7 +67,6 @@ func (s *WhatsAppService) Connect() error {
 	return nil
 }
 
-// Disconnect closes the WhatsApp connection
 func (s *WhatsAppService) Disconnect() {
 	if s.client != nil && s.client.IsConnected() {
 		s.client.Disconnect()
@@ -103,12 +74,10 @@ func (s *WhatsAppService) Disconnect() {
 	}
 }
 
-// IsConnected checks if the client is connected
 func (s *WhatsAppService) IsConnected() bool {
 	return s.client != nil && s.client.IsConnected()
 }
 
-// SendTextMessage sends a text message
 func (s *WhatsAppService) SendTextMessage(number, text string) error {
 	jid, err := s.parsePhoneNumber(number)
 	if err != nil {
@@ -118,12 +87,12 @@ func (s *WhatsAppService) SendTextMessage(number, text string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_, err = s.client.SendMessage(ctx, jid, &waProto.Message{
-		ExtendedTextMessage: &waProto.ExtendedTextMessage{
+	_, err = s.client.SendMessage(ctx, jid, &waE2E.Message{
+		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
 			Text: proto.String(text),
 		},
 	})
-	
+
 	if err != nil {
 		return fmt.Errorf("falha ao enviar mensagem: %w", err)
 	}
@@ -132,7 +101,6 @@ func (s *WhatsAppService) SendTextMessage(number, text string) error {
 	return nil
 }
 
-// SendMediaMessage sends a media message (image, video, audio, document)
 func (s *WhatsAppService) SendMediaMessage(number, caption, mediaURL, mediaBase64, mimeType string) error {
 	jid, err := s.parsePhoneNumber(number)
 	if err != nil {
@@ -145,9 +113,9 @@ func (s *WhatsAppService) SendMediaMessage(number, caption, mediaURL, mediaBase6
 	}
 
 	mediaType := s.determineMediaType(contentType)
-	
+
 	s.logger.Infof("Fazendo upload da mídia: tipo=%s, tamanho=%d bytes", contentType, len(mediaData))
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -159,7 +127,7 @@ func (s *WhatsAppService) SendMediaMessage(number, caption, mediaURL, mediaBase6
 	s.logger.Infof("Mídia enviada com sucesso: URL=%s", uploaded.URL)
 
 	message := s.buildMediaMessage(uploaded, mediaData, contentType, caption, filename)
-	
+
 	_, err = s.client.SendMessage(ctx, jid, message)
 	if err != nil {
 		return fmt.Errorf("falha ao enviar mensagem de mídia: %w", err)
@@ -169,18 +137,14 @@ func (s *WhatsAppService) SendMediaMessage(number, caption, mediaURL, mediaBase6
 	return nil
 }
 
-// parsePhoneNumber validates and parses phone number to JID
 func (s *WhatsAppService) parsePhoneNumber(number string) (types.JID, error) {
-	// Clean the number
 	number = strings.TrimSpace(number)
 	number = strings.ReplaceAll(number, " ", "")
 	number = strings.ReplaceAll(number, "-", "")
 	number = strings.ReplaceAll(number, "(", "")
 	number = strings.ReplaceAll(number, ")", "")
-	
-	// Add @s.whatsapp.net if not present
+
 	if !strings.HasSuffix(number, "@s.whatsapp.net") {
-		// Add country code if not present
 		if !strings.HasPrefix(number, s.config.WhatsApp.DefaultCountry) {
 			number = s.config.WhatsApp.DefaultCountry + number
 		}
@@ -195,7 +159,6 @@ func (s *WhatsAppService) parsePhoneNumber(number string) (types.JID, error) {
 	return jid, nil
 }
 
-// prepareMediaData downloads or decodes media data
 func (s *WhatsAppService) prepareMediaData(mediaURL, mediaBase64, mimeType string) ([]byte, string, string, error) {
 	var mediaData []byte
 	var contentType string
@@ -207,7 +170,7 @@ func (s *WhatsAppService) prepareMediaData(mediaURL, mediaBase64, mimeType strin
 		if err != nil {
 			return nil, "", "", err
 		}
-		
+
 		exts, _ := mime.ExtensionsByType(contentType)
 		ext := ".bin"
 		if len(exts) > 0 {
@@ -220,7 +183,7 @@ func (s *WhatsAppService) prepareMediaData(mediaURL, mediaBase64, mimeType strin
 		if err != nil {
 			return nil, "", "", err
 		}
-		
+
 		ext := filepath.Ext(mediaURL)
 		if ext == "" {
 			exts, _ := mime.ExtensionsByType(contentType)
@@ -237,18 +200,15 @@ func (s *WhatsAppService) prepareMediaData(mediaURL, mediaBase64, mimeType strin
 	return mediaData, contentType, filename, nil
 }
 
-// decodeBase64Media decodes base64 media
 func (s *WhatsAppService) decodeBase64Media(base64Str, mimeType string) ([]byte, string, error) {
-	// Clean base64 string
 	base64Str = strings.TrimSpace(base64Str)
-	
-	// Remove data URI prefix if present
+
 	if strings.HasPrefix(base64Str, "data:") {
 		if idx := strings.Index(base64Str, ","); idx != -1 {
 			base64Str = base64Str[idx+1:]
 		}
 	}
-	
+
 	base64Str = strings.ReplaceAll(base64Str, "\n", "")
 	base64Str = strings.ReplaceAll(base64Str, "\r", "")
 	base64Str = strings.TrimSpace(base64Str)
@@ -266,7 +226,6 @@ func (s *WhatsAppService) decodeBase64Media(base64Str, mimeType string) ([]byte,
 	return mediaData, contentType, nil
 }
 
-// downloadMedia downloads media from URL
 func (s *WhatsAppService) downloadMedia(url string) ([]byte, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -280,7 +239,12 @@ func (s *WhatsAppService) downloadMedia(url string) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("falha ao baixar mídia: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			s.logger.Errorf("falha ao fechar corpo da resposta: %v", err)
+		}
+	}(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", fmt.Errorf("falha ao baixar mídia: status %d", resp.StatusCode)
@@ -299,7 +263,6 @@ func (s *WhatsAppService) downloadMedia(url string) ([]byte, string, error) {
 	return mediaData, contentType, nil
 }
 
-// determineMediaType determines WhatsApp media type from content type
 func (s *WhatsAppService) determineMediaType(contentType string) whatsmeow.MediaType {
 	switch {
 	case strings.HasPrefix(contentType, "image/"):
@@ -313,15 +276,14 @@ func (s *WhatsAppService) determineMediaType(contentType string) whatsmeow.Media
 	}
 }
 
-// buildMediaMessage builds the appropriate WhatsApp message based on media type
-func (s *WhatsAppService) buildMediaMessage(uploaded whatsmeow.UploadResponse, mediaData []byte, contentType, caption, filename string) *waProto.Message {
+func (s *WhatsAppService) buildMediaMessage(uploaded whatsmeow.UploadResponse, mediaData []byte, contentType, caption, filename string) *waE2E.Message {
 	fileLength := proto.Uint64(uint64(len(mediaData)))
 	mimetype := proto.String(contentType)
 
 	switch {
 	case strings.HasPrefix(contentType, "image/"):
-		return &waProto.Message{
-			ImageMessage: &waProto.ImageMessage{
+		return &waE2E.Message{
+			ImageMessage: &waE2E.ImageMessage{
 				Caption:       proto.String(caption),
 				URL:           proto.String(uploaded.URL),
 				DirectPath:    proto.String(uploaded.DirectPath),
@@ -333,8 +295,8 @@ func (s *WhatsAppService) buildMediaMessage(uploaded whatsmeow.UploadResponse, m
 			},
 		}
 	case strings.HasPrefix(contentType, "video/"):
-		return &waProto.Message{
-			VideoMessage: &waProto.VideoMessage{
+		return &waE2E.Message{
+			VideoMessage: &waE2E.VideoMessage{
 				Caption:       proto.String(caption),
 				URL:           proto.String(uploaded.URL),
 				DirectPath:    proto.String(uploaded.DirectPath),
@@ -346,8 +308,8 @@ func (s *WhatsAppService) buildMediaMessage(uploaded whatsmeow.UploadResponse, m
 			},
 		}
 	case strings.HasPrefix(contentType, "audio/"):
-		return &waProto.Message{
-			AudioMessage: &waProto.AudioMessage{
+		return &waE2E.Message{
+			AudioMessage: &waE2E.AudioMessage{
 				URL:           proto.String(uploaded.URL),
 				DirectPath:    proto.String(uploaded.DirectPath),
 				MediaKey:      uploaded.MediaKey,
@@ -358,8 +320,8 @@ func (s *WhatsAppService) buildMediaMessage(uploaded whatsmeow.UploadResponse, m
 			},
 		}
 	default:
-		return &waProto.Message{
-			DocumentMessage: &waProto.DocumentMessage{
+		return &waE2E.Message{
+			DocumentMessage: &waE2E.DocumentMessage{
 				Caption:       proto.String(caption),
 				URL:           proto.String(uploaded.URL),
 				DirectPath:    proto.String(uploaded.DirectPath),
