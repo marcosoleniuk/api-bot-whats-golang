@@ -261,7 +261,7 @@ func (h *MultiTenantHandler) Health(w http.ResponseWriter, r *http.Request) {
 
 	health := models.HealthResponse{
 		Status:    "healthy",
-		Service:   "WhatsApp Bot API (Multi-Tenant)",
+		Service:   "WhatsApp Bot API (Multi Sessões)",
 		Version:   "2.0.0",
 		Uptime:    uptime.String(),
 		Timestamp: time.Now(),

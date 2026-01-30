@@ -204,7 +204,7 @@ func (h *Handler) SendMediaMessage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) HealthCheck(w http.ResponseWriter) {
 	uptime := time.Since(h.startTime)
 
 	checks := map[string]string{
@@ -223,7 +223,7 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 
 	response := models.HealthResponse{
 		Status:    status,
-		Service:   "WhatsApp Bot API - Multi-Tenant MOleniuk",
+		Service:   "WhatsApp Bot API - Multi Sessões MOleniuk",
 		Version:   "2.0.0",
 		Uptime:    uptime.String(),
 		Timestamp: time.Now(),

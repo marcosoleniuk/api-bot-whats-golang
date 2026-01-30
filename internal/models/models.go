@@ -8,13 +8,14 @@ import (
 
 type WhatsAppSession struct {
 	ID                 uuid.UUID  `json:"id" db:"id"`
+	TenantID           string     `json:"tenant_id" db:"tenant_id"`
 	WhatsAppSessionKey string     `json:"whatsapp_session_key" db:"whatsapp_session_key"`
 	NomePessoa         string     `json:"nome_pessoa" db:"nome_pessoa"`
 	EmailPessoa        string     `json:"email_pessoa" db:"email_pessoa"`
-	PhoneNumber        string     `json:"phone_number,omitempty" db:"phone_number"`
-	DeviceJID          string     `json:"device_jid,omitempty" db:"device_jid"`
-	Status             string     `json:"status" db:"status"` // pending, connected, disconnected, error
-	QRCode             string     `json:"qr_code,omitempty" db:"qr_code"`
+	PhoneNumber        *string    `json:"phone_number,omitempty" db:"phone_number"`
+	DeviceJID          *string    `json:"device_jid,omitempty" db:"device_jid"`
+	Status             string     `json:"status" db:"status"`
+	QRCode             *string    `json:"qr_code,omitempty" db:"qr_code"`
 	QRCodeExpiresAt    *time.Time `json:"qr_code_expires_at,omitempty" db:"qr_code_expires_at"`
 	CreatedAt          time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at" db:"updated_at"`

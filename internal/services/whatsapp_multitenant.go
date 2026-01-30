@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -18,9 +19,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	qrcode "github.com/skip2/go-qrcode"
+	"github.com/skip2/go-qrcode"
 	"go.mau.fi/whatsmeow"
-	waProto "go.mau.fi/whatsmeow/binary/proto"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
@@ -29,21 +30,110 @@ import (
 )
 
 type WhatsAppClient struct {
-	Client         *whatsmeow.Client
-	Session        *models.WhatsAppSession
-	QRChan         <-chan whatsmeow.QRChannelItem
-	CancelQR       context.CancelFunc
-	LastQRCode     string
-	LastQRCodeTime time.Time
+	Client  *whatsmeow.Client
+	Session *models.WhatsAppSession
+
+	cancelQR context.CancelFunc
+
+	qrMu        sync.RWMutex
+	lastQRCode  string
+	lastQRTime  time.Time
+	lastQRExpAt time.Time
+}
+
+func (c *WhatsAppClient) setQR(codeBase64 string, exp time.Time) {
+	c.qrMu.Lock()
+	c.lastQRCode = codeBase64
+	c.lastQRTime = time.Now()
+	c.lastQRExpAt = exp
+	c.qrMu.Unlock()
+}
+
+func (c *WhatsAppClient) getQR() (string, time.Time, bool) {
+	c.qrMu.RLock()
+	qr := c.lastQRCode
+	exp := c.lastQRExpAt
+	c.qrMu.RUnlock()
+	if qr == "" {
+		return "", time.Time{}, false
+	}
+	return qr, exp, true
+}
+
+const clientShards = 64
+
+type clientShard struct {
+	mu sync.RWMutex
+	m  map[string]*WhatsAppClient
+}
+
+type clientStore struct {
+	shards [clientShards]clientShard
+}
+
+func newClientStore() *clientStore {
+	cs := &clientStore{}
+	for i := 0; i < clientShards; i++ {
+		cs.shards[i].m = make(map[string]*WhatsAppClient)
+	}
+	return cs
+}
+
+func (cs *clientStore) shard(key string) *clientShard {
+	var h uint32 = 2166136261
+	for i := 0; i < len(key); i++ {
+		h ^= uint32(key[i])
+		h *= 16777619
+	}
+	return &cs.shards[h%clientShards]
+}
+
+func (cs *clientStore) Get(key string) (*WhatsAppClient, bool) {
+	sh := cs.shard(key)
+	sh.mu.RLock()
+	v, ok := sh.m[key]
+	sh.mu.RUnlock()
+	return v, ok
+}
+
+func (cs *clientStore) Set(key string, v *WhatsAppClient) {
+	sh := cs.shard(key)
+	sh.mu.Lock()
+	sh.m[key] = v
+	sh.mu.Unlock()
+}
+
+func (cs *clientStore) Delete(key string) (*WhatsAppClient, bool) {
+	sh := cs.shard(key)
+	sh.mu.Lock()
+	v, ok := sh.m[key]
+	if ok {
+		delete(sh.m, key)
+	}
+	sh.mu.Unlock()
+	return v, ok
+}
+
+func (cs *clientStore) Range(fn func(key string, v *WhatsAppClient)) {
+	for i := 0; i < clientShards; i++ {
+		sh := &cs.shards[i]
+		sh.mu.RLock()
+		for k, v := range sh.m {
+			fn(k, v)
+		}
+		sh.mu.RUnlock()
+	}
 }
 
 type MultiTenantWhatsAppService struct {
-	clients    map[string]*WhatsAppClient
-	mu         sync.RWMutex
+	clients *clientStore
+
 	config     *config.Config
 	logger     *logger.Logger
 	repository *repository.SessionRepository
 	container  *sqlstore.Container
+
+	httpClient *http.Client
 }
 
 func NewMultiTenantWhatsAppService(cfg *config.Config, db *sql.DB, log *logger.Logger) (*MultiTenantWhatsAppService, error) {
@@ -57,12 +147,30 @@ func NewMultiTenantWhatsAppService(cfg *config.Config, db *sql.DB, log *logger.L
 
 	repo := repository.NewSessionRepository(db, log)
 
+	tr := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:          1024,
+		MaxIdleConnsPerHost:   256,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+	httpClient := &http.Client{
+		Transport: tr,
+		Timeout:   2 * time.Minute,
+	}
+
 	service := &MultiTenantWhatsAppService{
-		clients:    make(map[string]*WhatsAppClient),
+		clients:    newClientStore(),
 		config:     cfg,
 		logger:     log,
 		repository: repo,
 		container:  container,
+		httpClient: httpClient,
 	}
 
 	if err := service.LoadExistingSessions(); err != nil {
@@ -79,42 +187,44 @@ func (s *MultiTenantWhatsAppService) LoadExistingSessions() error {
 	if err != nil {
 		return err
 	}
-
 	s.logger.Infof("Encontradas %d sessões no banco de dados", len(sessions))
 
-	for _, session := range sessions {
-		s.logger.Infof("Processando sessão: %s (Status: %s, Phone: %s)",
-			session.WhatsAppSessionKey, session.Status, session.PhoneNumber)
+	ctx := context.Background()
+	devices, devErr := s.container.GetAllDevices(ctx)
+	byUser := make(map[string]*store.Device, len(devices))
+	if devErr != nil {
+		s.logger.Warnf("Falha ao listar devices: %v", devErr)
+	} else {
+		for _, ds := range devices {
+			if ds != nil && ds.ID != nil {
+				byUser[ds.ID.User] = ds
+			}
+		}
+	}
 
-		if session.DeviceJID == "" && session.PhoneNumber != "" {
-			devices, listErr := s.container.GetAllDevices(context.Background())
-			if listErr != nil {
-				s.logger.Warnf("Falha ao listar devices para backfill: %v", listErr)
-			} else {
-				for _, ds := range devices {
-					if ds != nil && ds.ID != nil && ds.ID.User == session.PhoneNumber {
-						session.DeviceJID = ds.ID.String()
-						if err := s.repository.UpdateDeviceJID(session.ID, session.DeviceJID); err != nil {
-							s.logger.Warnf("Falha ao persistir device_jid: %v", err)
-						}
-						break
-					}
+	for _, session := range sessions {
+		phone := ""
+		if session.PhoneNumber != nil {
+			phone = *session.PhoneNumber
+		}
+
+		if (session.DeviceJID == nil || *session.DeviceJID == "") && phone != "" {
+			if ds := byUser[phone]; ds != nil && ds.ID != nil {
+				deviceJIDStr := ds.ID.String()
+				session.DeviceJID = &deviceJIDStr
+				if err := s.repository.UpdateDeviceJID(session.ID, deviceJIDStr); err != nil {
+					s.logger.Warnf("Falha ao persistir device_jid: %v", err)
 				}
 			}
 		}
 
-		if session.PhoneNumber != "" &&
-			(session.Status == models.SessionStatusConnected || session.Status == models.SessionStatusDisconnected) {
-			s.logger.Infof("Reconectando sessão: %s", session.WhatsAppSessionKey)
+		if phone != "" && (session.Status == models.SessionStatusConnected || session.Status == models.SessionStatusDisconnected) {
 			if err := s.reconnectSession(session); err != nil {
 				s.logger.Errorf("Falha ao reconectar sessão %s: %v", session.WhatsAppSessionKey, err)
 				if updateErr := s.repository.UpdateStatus(session.ID, models.SessionStatusDisconnected, "", ""); updateErr != nil {
 					s.logger.Errorf("Falha ao atualizar status após erro de reconexão: %v", updateErr)
 				}
 			}
-		} else {
-			s.logger.Infof("Sessão %s não será reconectada (Status: %s, Phone: %s)",
-				session.WhatsAppSessionKey, session.Status, session.PhoneNumber)
 		}
 	}
 
@@ -122,29 +232,58 @@ func (s *MultiTenantWhatsAppService) LoadExistingSessions() error {
 	return nil
 }
 
-func (s *MultiTenantWhatsAppService) RegisterSession(req *models.RegisterSessionRequest) (*models.RegisterSessionResponse, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	session := &models.WhatsAppSession{
-		ID:                 uuid.New(),
-		WhatsAppSessionKey: req.WhatsAppSessionKey,
-		NomePessoa:         req.NomePessoa,
-		EmailPessoa:        req.EmailPessoa,
-		Status:             models.SessionStatusPending,
-		CreatedAt:          time.Now(),
-		UpdatedAt:          time.Now(),
+func (s *MultiTenantWhatsAppService) RegisterSession(req *models.RegisterSessionRequest, tenantID string) (*models.RegisterSessionResponse, error) {
+	if old, ok := s.clients.Delete(req.WhatsAppSessionKey); ok {
+		if old.cancelQR != nil {
+			old.cancelQR()
+		}
+		if old.Client != nil {
+			old.Client.Disconnect()
+		}
 	}
 
-	if err := s.repository.Create(session); err != nil {
+	var session *models.WhatsAppSession
+	exists, err := s.repository.ExistsBySessionKeyAndTenant(req.WhatsAppSessionKey, tenantID)
+	if err != nil {
 		return nil, err
+	}
+	if exists {
+		session, err = s.repository.GetBySessionKeyAndTenant(req.WhatsAppSessionKey, tenantID)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.repository.ResetSessionForReRegister(session.ID, req.NomePessoa, req.EmailPessoa); err != nil {
+			return nil, err
+		}
+		session.NomePessoa = req.NomePessoa
+		session.EmailPessoa = req.EmailPessoa
+		session.Status = models.SessionStatusPending
+		session.PhoneNumber = nil
+		session.DeviceJID = nil
+		session.QRCode = nil
+		session.QRCodeExpiresAt = nil
+		session.LastConnectedAt = nil
+		session.UpdatedAt = time.Now()
+	} else {
+		session = &models.WhatsAppSession{
+			ID:                 uuid.New(),
+			TenantID:           tenantID,
+			WhatsAppSessionKey: req.WhatsAppSessionKey,
+			NomePessoa:         req.NomePessoa,
+			EmailPessoa:        req.EmailPessoa,
+			Status:             models.SessionStatusPending,
+			CreatedAt:          time.Now(),
+			UpdatedAt:          time.Now(),
+		}
+		if err := s.repository.Create(session); err != nil {
+			return nil, err
+		}
 	}
 
 	deviceStore := s.container.NewDevice()
 
 	waLogger := logger.NewWhatsAppLogger(fmt.Sprintf("[WA:%s] ", session.WhatsAppSessionKey), logger.INFO)
 	client := whatsmeow.NewClient(deviceStore, waLogger)
-
 	s.registerEventHandlers(client, session)
 
 	qrCtx, cancelQR := context.WithCancel(context.Background())
@@ -154,70 +293,90 @@ func (s *MultiTenantWhatsAppService) RegisterSession(req *models.RegisterSession
 		return nil, fmt.Errorf("falha ao obter canal de QR: %w", err)
 	}
 
+	waClient := &WhatsAppClient{
+		Client:   client,
+		Session:  session,
+		cancelQR: cancelQR,
+	}
+	s.clients.Set(session.WhatsAppSessionKey, waClient)
+
 	if err := client.Connect(); err != nil {
 		cancelQR()
+		s.clients.Delete(session.WhatsAppSessionKey)
 		return nil, fmt.Errorf("falha ao conectar: %w", err)
 	}
 
-	whatsappClient := &WhatsAppClient{
-		Client:         client,
-		Session:        session,
-		QRChan:         qrChan,
-		CancelQR:       cancelQR,
-		LastQRCodeTime: time.Now(),
-	}
+	go s.monitorQRCode(session, waClient, qrChan)
 
-	s.clients[session.WhatsAppSessionKey] = whatsappClient
+	timeout := time.NewTimer(8 * time.Second)
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer timeout.Stop()
+	defer ticker.Stop()
 
-	go s.monitorQRCode(whatsappClient)
-
-	timeout := time.After(10 * time.Second)
-	select {
-	case <-timeout:
-		return nil, fmt.Errorf("timeout aguardando QR code")
-	case <-time.After(500 * time.Millisecond):
-		if whatsappClient.LastQRCode == "" {
-			time.Sleep(1 * time.Second)
+	for {
+		select {
+		case <-timeout.C:
+			return nil, fmt.Errorf("timeout aguardando QR code")
+		case <-ticker.C:
+			if client.Store != nil && client.Store.ID != nil {
+				cancelQR()
+				phoneNumber := client.Store.ID.User
+				deviceJID := client.Store.ID.String()
+				_ = s.repository.UpdateStatus(session.ID, models.SessionStatusConnected, phoneNumber, deviceJID)
+				return &models.RegisterSessionResponse{
+					ID:                 session.ID,
+					WhatsAppSessionKey: session.WhatsAppSessionKey,
+					QRCodeBase64:       "",
+					Status:             models.SessionStatusConnected,
+					ExpiresAt:          time.Time{},
+				}, nil
+			}
+			if qr, exp, ok := waClient.getQR(); ok {
+				return &models.RegisterSessionResponse{
+					ID:                 session.ID,
+					WhatsAppSessionKey: session.WhatsAppSessionKey,
+					QRCodeBase64:       qr,
+					Status:             models.SessionStatusPending,
+					ExpiresAt:          exp,
+				}, nil
+			}
 		}
 	}
-
-	qrCodeBase64 := whatsappClient.LastQRCode
-	if qrCodeBase64 == "" {
-		return nil, fmt.Errorf("QR code não gerado")
-	}
-
-	expiresAt := time.Now().Add(60 * time.Second)
-
-	return &models.RegisterSessionResponse{
-		ID:                 session.ID,
-		WhatsAppSessionKey: session.WhatsAppSessionKey,
-		QRCodeBase64:       qrCodeBase64,
-		Status:             session.Status,
-		ExpiresAt:          expiresAt,
-	}, nil
 }
 
-func (s *MultiTenantWhatsAppService) monitorQRCode(waClient *WhatsAppClient) {
-	for evt := range waClient.QRChan {
-		if evt.Event == "code" {
-			s.logger.Infof("Novo QR code gerado para sessão: %s", waClient.Session.WhatsAppSessionKey)
-
-			qrCodePNG, err := qrcode.Encode(evt.Code, qrcode.Medium, 256)
+func (s *MultiTenantWhatsAppService) monitorQRCode(session *models.WhatsAppSession, waClient *WhatsAppClient, qrChan <-chan whatsmeow.QRChannelItem) {
+	for item := range qrChan {
+		switch item.Event {
+		case "code":
+			qrCodePNG, err := qrcode.Encode(item.Code, qrcode.Medium, 256)
 			if err != nil {
 				s.logger.Errorf("Falha ao gerar QR code PNG: %v", err)
 				continue
 			}
 
 			qrCodeBase64 := base64.StdEncoding.EncodeToString(qrCodePNG)
-			waClient.LastQRCode = qrCodeBase64
-			waClient.LastQRCodeTime = time.Now()
+			exp := time.Now().Add(60 * time.Second)
+			if item.Timeout > 0 {
+				exp = time.Now().Add(item.Timeout)
+			}
 
-			expiresAt := time.Now().Add(60 * time.Second)
-			if err := s.repository.UpdateQRCode(waClient.Session.ID, qrCodeBase64, expiresAt); err != nil {
+			waClient.setQR(qrCodeBase64, exp)
+			if err := s.repository.UpdateQRCode(session.ID, qrCodeBase64, exp); err != nil {
 				s.logger.Errorf("Falha ao atualizar QR code no banco: %v", err)
 			}
-		} else {
-			s.logger.Infof("Evento de login para %s: %s", waClient.Session.WhatsAppSessionKey, evt.Event)
+
+		case "success":
+			if waClient.cancelQR != nil {
+				waClient.cancelQR()
+			}
+			return
+		case "timeout":
+			return
+		default:
+			if item.Error != nil {
+				s.logger.Errorf("Erro no pairing: %v", item.Error)
+			}
+			return
 		}
 	}
 }
@@ -226,58 +385,39 @@ func (s *MultiTenantWhatsAppService) registerEventHandlers(client *whatsmeow.Cli
 	client.AddEventHandler(func(evt interface{}) {
 		switch evt.(type) {
 		case *events.Connected:
-			s.logger.Infof("Sessão %s conectada ao WhatsApp", session.WhatsAppSessionKey)
-
 			phoneNumber := ""
 			deviceJID := ""
-			if client.Store.ID != nil {
+			if client.Store != nil && client.Store.ID != nil {
 				phoneNumber = client.Store.ID.User
 				deviceJID = client.Store.ID.String()
 			}
-
-			if err := s.repository.UpdateStatus(session.ID, models.SessionStatusConnected, phoneNumber, deviceJID); err != nil {
-				s.logger.Errorf("Falha ao atualizar status: %v", err)
-			}
+			_ = s.repository.UpdateStatus(session.ID, models.SessionStatusConnected, phoneNumber, deviceJID)
 
 		case *events.Disconnected:
-			s.logger.Warnf("Sessão %s desconectada do WhatsApp", session.WhatsAppSessionKey)
-			if err := s.repository.UpdateStatus(session.ID, models.SessionStatusDisconnected, "", ""); err != nil {
-				s.logger.Errorf("Falha ao atualizar status: %v", err)
-			}
+			_ = s.repository.UpdateStatus(session.ID, models.SessionStatusDisconnected, "", "")
 
 		case *events.LoggedOut:
-			s.logger.Warnf("Sessão %s fez logout", session.WhatsAppSessionKey)
 			if client.Store != nil {
-				if err := client.Store.Delete(context.Background()); err != nil {
-					s.logger.Errorf("Falha ao apagar store local após logout: %v", err)
-				}
+				_ = client.Store.Delete(context.Background())
 			}
-			if err := s.repository.MarkLoggedOut(session.ID); err != nil {
-				s.logger.Errorf("Falha ao atualizar status após logout: %v", err)
-			}
+			_ = s.repository.MarkLoggedOut(session.ID)
 		}
 	})
 }
 
 func (s *MultiTenantWhatsAppService) reconnectSession(session *models.WhatsAppSession) error {
-	if session.PhoneNumber == "" {
+	if session.PhoneNumber == nil || *session.PhoneNumber == "" {
 		return fmt.Errorf("sessão não pode ser reconectada: phone_number ausente")
 	}
-
-	s.logger.Infof("Iniciando reconexão da sessão: %s (Phone: %s)", session.WhatsAppSessionKey, session.PhoneNumber)
 
 	ctx := context.Background()
 
 	var deviceStore *store.Device
 	var err error
 
-	if session.DeviceJID != "" {
-		deviceJID, parseErr := types.ParseJID(session.DeviceJID)
-		if parseErr != nil {
-			s.logger.Warnf("Falha ao parse device_jid salvo (%s): %v", session.DeviceJID, parseErr)
-		} else {
-			s.logger.Infof("Buscando device pelo device_jid salvo: %s", deviceJID.String())
-			deviceStore, err = s.container.GetDevice(ctx, deviceJID)
+	if session.DeviceJID != nil && *session.DeviceJID != "" {
+		if jid, parseErr := types.ParseJID(*session.DeviceJID); parseErr == nil {
+			deviceStore, err = s.container.GetDevice(ctx, jid)
 			if err != nil {
 				s.logger.Warnf("GetDevice por device_jid falhou: %v", err)
 			}
@@ -285,12 +425,10 @@ func (s *MultiTenantWhatsAppService) reconnectSession(session *models.WhatsAppSe
 	}
 
 	if deviceStore == nil || deviceStore.ID == nil {
-		jid, parseErr := types.ParseJID(session.PhoneNumber + "@s.whatsapp.net")
+		jid, parseErr := types.ParseJID(*session.PhoneNumber + "@s.whatsapp.net")
 		if parseErr != nil {
 			return fmt.Errorf("falha ao parse JID: %w", parseErr)
 		}
-
-		s.logger.Infof("Buscando device para JID: %s", jid.String())
 		deviceStore, err = s.container.GetDevice(ctx, jid)
 		if err != nil {
 			s.logger.Warnf("GetDevice por JID falhou: %v", err)
@@ -298,104 +436,123 @@ func (s *MultiTenantWhatsAppService) reconnectSession(session *models.WhatsAppSe
 	}
 
 	if deviceStore == nil || deviceStore.ID == nil {
-		s.logger.Warnf("Device store não encontrado por JID. Tentando localizar por usuário %s", session.PhoneNumber)
-		devices, listErr := s.container.GetAllDevices(ctx)
-		if listErr != nil {
-			s.logger.Warnf("Falha ao listar devices: %v", listErr)
-		} else {
-			for _, ds := range devices {
-				if ds != nil && ds.ID != nil && ds.ID.User == session.PhoneNumber {
-					deviceStore = ds
-					break
-				}
-			}
-		}
-	}
-
-	if deviceStore == nil || deviceStore.ID == nil {
-		s.logger.Warnf("Device store não encontrado para sessão %s. Criando novo device (necessário novo QR code)", session.WhatsAppSessionKey)
-		deviceStore = s.container.NewDevice()
-
-		if err := s.repository.UpdateStatus(session.ID, models.SessionStatusPending, "", ""); err != nil {
-			s.logger.Errorf("Falha ao atualizar status para pending: %v", err)
-		}
-	} else {
-		s.logger.Infof("Device store encontrado para sessão %s (JID: %v)", session.WhatsAppSessionKey, deviceStore.ID)
+		_ = s.repository.UpdateStatus(session.ID, models.SessionStatusPending, "", "")
+		return nil
 	}
 
 	waLogger := logger.NewWhatsAppLogger(fmt.Sprintf("[WA:%s] ", session.WhatsAppSessionKey), logger.INFO)
 	client := whatsmeow.NewClient(deviceStore, waLogger)
-
-	whatsappClient := &WhatsAppClient{
-		Client:  client,
-		Session: session,
-		QRChan:  make(chan whatsmeow.QRChannelItem, 5),
-	}
-
-	s.mu.Lock()
-	s.clients[session.WhatsAppSessionKey] = whatsappClient
-	s.mu.Unlock()
-
-	s.logger.Infof("Sessão %s adicionada ao map de clientes", session.WhatsAppSessionKey)
-
 	s.registerEventHandlers(client, session)
 
-	if client.Store.ID != nil {
-		go func() {
-			s.logger.Infof("Tentando conectar sessão %s...", session.WhatsAppSessionKey)
-			if err := client.Connect(); err != nil {
-				s.logger.Errorf("Falha ao reconectar sessão %s: %v", session.WhatsAppSessionKey, err)
-				if updateErr := s.repository.UpdateStatus(session.ID, models.SessionStatusDisconnected, "", ""); updateErr != nil {
-					s.logger.Errorf("Falha ao atualizar status após erro de reconexão: %v", updateErr)
-				}
-			} else {
-				s.logger.Infof("Sessão %s reconectada com sucesso!", session.WhatsAppSessionKey)
-			}
-		}()
-	} else {
-		s.logger.Infof("Sessão %s não possui credenciais salvas. QR code necessário.", session.WhatsAppSessionKey)
-	}
+	waClient := &WhatsAppClient{Client: client, Session: session}
+	s.clients.Set(session.WhatsAppSessionKey, waClient)
+
+	go func() {
+		if err := client.Connect(); err != nil {
+			s.logger.Errorf("Falha ao reconectar sessão %s: %v", session.WhatsAppSessionKey, err)
+			_ = s.repository.UpdateStatus(session.ID, models.SessionStatusDisconnected, "", "")
+		}
+	}()
 
 	return nil
 }
 
-func (s *MultiTenantWhatsAppService) GetQRCode(sessionKey string) (string, error) {
-	s.mu.RLock()
-	waClient, exists := s.clients[sessionKey]
-	s.mu.RUnlock()
+var (
+	ErrSessionAlreadyConnected = fmt.Errorf("SESSION_ALREADY_CONNECTED")
+)
 
-	if !exists {
-		return "", fmt.Errorf("sessão não encontrada")
+func (s *MultiTenantWhatsAppService) GetQRCode(sessionKey string, tenantID string) (string, error) {
+	session, err := s.repository.GetBySessionKeyAndTenant(sessionKey, tenantID)
+	if err != nil {
+		return "", fmt.Errorf("sessão não encontrada ou não pertence a este tenant")
 	}
 
-	if waClient.Client.IsConnected() {
-		return "", fmt.Errorf("sessão já está conectada")
-	}
+	waClient, ok := s.clients.Get(sessionKey)
+	if !ok {
+		if session.QRCode != nil && session.QRCodeExpiresAt != nil {
+			if time.Now().Before(*session.QRCodeExpiresAt) {
+				return *session.QRCode, nil
+			}
+			return "", fmt.Errorf("QR code expirado, gere outro")
+		}
 
-	if waClient.LastQRCode == "" {
+		if session.Status == models.SessionStatusConnected {
+			return "", ErrSessionAlreadyConnected
+		}
+
 		return "", fmt.Errorf("QR code ainda não foi gerado")
 	}
 
-	if time.Since(waClient.LastQRCodeTime) > 60*time.Second {
-		return "", fmt.Errorf("QR code expirado, aguarde um novo")
+	if waClient.Client != nil && waClient.Client.Store != nil && waClient.Client.Store.ID != nil {
+		return "", ErrSessionAlreadyConnected
 	}
 
-	return waClient.LastQRCode, nil
+	qr, exp, ok := waClient.getQR()
+	if !ok {
+		return "", fmt.Errorf("QR code ainda não foi gerado")
+	}
+	if !exp.IsZero() && time.Now().After(exp) {
+		if newQR, _, regenErr := s.refreshQRCode(session, waClient); regenErr == nil {
+			return newQR, nil
+		}
+
+		return "", fmt.Errorf("QR code expirado, gere outro")
+	}
+	return qr, nil
 }
 
-func (s *MultiTenantWhatsAppService) GetClient(sessionKey string) (*whatsmeow.Client, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+func (s *MultiTenantWhatsAppService) refreshQRCode(session *models.WhatsAppSession, waClient *WhatsAppClient) (string, time.Time, error) {
+	if waClient.cancelQR != nil {
+		waClient.cancelQR()
+	}
 
-	waClient, exists := s.clients[sessionKey]
-	if !exists {
-		return nil, fmt.Errorf("sessão não encontrada: %s", sessionKey)
+	qrCtx, cancelQR := context.WithCancel(context.Background())
+	waClient.cancelQR = cancelQR
+
+	qrChan, err := waClient.Client.GetQRChannel(qrCtx)
+	if err != nil {
+		cancelQR()
+		return "", time.Time{}, err
 	}
 
 	if !waClient.Client.IsConnected() {
-		return nil, fmt.Errorf("sessão não está conectada")
+		if err := waClient.Client.Connect(); err != nil {
+			cancelQR()
+			return "", time.Time{}, err
+		}
 	}
 
+	go s.monitorQRCode(session, waClient, qrChan)
+
+	timeout := time.NewTimer(8 * time.Second)
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer timeout.Stop()
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeout.C:
+			return "", time.Time{}, fmt.Errorf("timeout aguardando QR code")
+		case <-ticker.C:
+			if qr, exp, ok := waClient.getQR(); ok {
+				return qr, exp, nil
+			}
+		}
+	}
+}
+
+func (s *MultiTenantWhatsAppService) GetClient(sessionKey string) (*whatsmeow.Client, error) {
+	waClient, ok := s.clients.Get(sessionKey)
+	if !ok {
+		return nil, fmt.Errorf("sessão não encontrada: %s", sessionKey)
+	}
+
+	if waClient.Client == nil || waClient.Client.Store == nil || waClient.Client.Store.ID == nil {
+		return nil, fmt.Errorf("sessão não está autenticada")
+	}
+	if !waClient.Client.IsConnected() {
+		return nil, fmt.Errorf("sessão não está conectada")
+	}
 	return waClient.Client, nil
 }
 
@@ -413,17 +570,14 @@ func (s *MultiTenantWhatsAppService) SendTextMessage(sessionKey, number, text st
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_, err = client.SendMessage(ctx, jid, &waProto.Message{
-		ExtendedTextMessage: &waProto.ExtendedTextMessage{
+	_, err = client.SendMessage(ctx, jid, &waE2E.Message{
+		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
 			Text: proto.String(text),
 		},
 	})
-
 	if err != nil {
 		return fmt.Errorf("falha ao enviar mensagem: %w", err)
 	}
-
-	s.logger.Infof("[%s] Mensagem de texto enviada para %s", sessionKey, number)
 	return nil
 }
 
@@ -445,8 +599,6 @@ func (s *MultiTenantWhatsAppService) SendMediaMessage(sessionKey, number, captio
 
 	mediaType := s.determineMediaType(contentType)
 
-	s.logger.Infof("[%s] Fazendo upload da mídia: tipo=%s, tamanho=%d bytes", sessionKey, contentType, len(mediaData))
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -455,16 +607,12 @@ func (s *MultiTenantWhatsAppService) SendMediaMessage(sessionKey, number, captio
 		return fmt.Errorf("falha ao fazer upload da mídia: %w", err)
 	}
 
-	s.logger.Infof("[%s] Mídia enviada com sucesso: URL=%s", sessionKey, uploaded.URL)
+	msg := s.buildMediaMessage(uploaded, mediaData, contentType, caption, filename)
 
-	message := s.buildMediaMessage(uploaded, mediaData, contentType, caption, filename)
-
-	_, err = client.SendMessage(ctx, jid, message)
+	_, err = client.SendMessage(ctx, jid, msg)
 	if err != nil {
 		return fmt.Errorf("falha ao enviar mensagem de mídia: %w", err)
 	}
-
-	s.logger.Infof("[%s] Mensagem de mídia enviada para %s", sessionKey, number)
 	return nil
 }
 
@@ -472,134 +620,129 @@ func (s *MultiTenantWhatsAppService) ListSessions() ([]*models.WhatsAppSession, 
 	return s.repository.List()
 }
 
-func (s *MultiTenantWhatsAppService) DisconnectSession(sessionKey string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *MultiTenantWhatsAppService) ListSessionsByTenant(tenantID string) ([]*models.WhatsAppSession, error) {
+	return s.repository.ListByTenant(tenantID)
+}
 
-	waClient, exists := s.clients[sessionKey]
-	if !exists {
-		return fmt.Errorf("sessão não encontrada")
+func (s *MultiTenantWhatsAppService) GetSessionByKeyAndTenant(sessionKey string, tenantID string) (*models.WhatsAppSession, error) {
+	return s.repository.GetBySessionKeyAndTenant(sessionKey, tenantID)
+}
+
+func (s *MultiTenantWhatsAppService) DisconnectSession(sessionKey string, tenantID string) error {
+	_, err := s.repository.GetBySessionKeyAndTenant(sessionKey, tenantID)
+	if err != nil {
+		return fmt.Errorf("sessão não encontrada ou não pertence a este tenant")
 	}
 
-	if waClient.CancelQR != nil {
-		waClient.CancelQR()
+	waClient, ok := s.clients.Delete(sessionKey)
+	if !ok {
+		return fmt.Errorf("sessão não está conectada")
 	}
 
-	if waClient.Client.IsConnected() {
+	if waClient.cancelQR != nil {
+		waClient.cancelQR()
+	}
+
+	if waClient.Client != nil && waClient.Client.IsConnected() {
 		waClient.Client.Disconnect()
 	}
 
-	delete(s.clients, sessionKey)
-
-	if err := s.repository.UpdateStatus(waClient.Session.ID, models.SessionStatusDisconnected, "", ""); err != nil {
-		return err
+	if waClient.Session != nil {
+		if err := s.repository.UpdateStatus(waClient.Session.ID, models.SessionStatusDisconnected, "", ""); err != nil {
+			return err
+		}
 	}
 
-	s.logger.Infof("Sessão desconectada: %s", sessionKey)
 	return nil
 }
 
-func (s *MultiTenantWhatsAppService) DeleteSession(sessionKey string) error {
-	if err := s.DisconnectSession(sessionKey); err != nil {
-		s.logger.Warnf("Erro ao desconectar sessão antes de deletar: %v", err)
-	}
+func (s *MultiTenantWhatsAppService) DeleteSession(sessionKey string, tenantID string) error {
+	_ = s.DisconnectSession(sessionKey, tenantID)
 
-	session, err := s.repository.GetBySessionKey(sessionKey)
+	session, err := s.repository.GetBySessionKeyAndTenant(sessionKey, tenantID)
 	if err != nil {
-		return err
+		return fmt.Errorf("sessão não encontrada ou não pertence a este tenant")
 	}
-
 	return s.repository.Delete(session.ID)
 }
 
 func (s *MultiTenantWhatsAppService) parsePhoneNumber(number string) (types.JID, error) {
-	number = strings.TrimSpace(number)
-	number = strings.ReplaceAll(number, " ", "")
-	number = strings.ReplaceAll(number, "-", "")
-	number = strings.ReplaceAll(number, "(", "")
-	number = strings.ReplaceAll(number, ")", "")
+	n := strings.TrimSpace(number)
+	n = strings.NewReplacer(" ", "", "-", "", "(", "", ")", "").Replace(n)
 
-	if !strings.HasSuffix(number, "@s.whatsapp.net") {
-		if !strings.HasPrefix(number, s.config.WhatsApp.DefaultCountry) {
-			number = s.config.WhatsApp.DefaultCountry + number
+	if !strings.HasSuffix(n, "@s.whatsapp.net") {
+		if !strings.HasPrefix(n, s.config.WhatsApp.DefaultCountry) {
+			n = s.config.WhatsApp.DefaultCountry + n
 		}
-		number = number + "@s.whatsapp.net"
+		n = n + "@s.whatsapp.net"
 	}
 
-	jid, err := types.ParseJID(number)
+	jid, err := types.ParseJID(n)
 	if err != nil {
 		return types.JID{}, fmt.Errorf("número de telefone inválido: %w", err)
 	}
-
 	return jid, nil
 }
 
 func (s *MultiTenantWhatsAppService) prepareMedia(mediaURL, mediaBase64, mimeType string) ([]byte, string, string, error) {
-	var mediaData []byte
-	var contentType string
-	var filename string
-	var err error
-
-	if mediaBase64 != "" {
-		mediaData, contentType, err = s.decodeBase64Media(mediaBase64, mimeType)
+	switch {
+	case mediaBase64 != "":
+		data, ct, err := s.decodeBase64Media(mediaBase64, mimeType)
 		if err != nil {
 			return nil, "", "", err
 		}
-
-		ext, _ := mime.ExtensionsByType(contentType)
-		if len(ext) > 0 {
-			filename = "media" + ext[0]
-		} else {
-			filename = "media"
+		ext := ""
+		if exts, _ := mime.ExtensionsByType(ct); len(exts) > 0 {
+			ext = exts[0]
 		}
-		filename = "media" + ext[0]
+		if ext == "" {
+			return data, ct, "media", nil
+		}
+		return data, ct, "media" + ext, nil
 
-	} else if mediaURL != "" {
-		mediaData, contentType, err = s.downloadMedia(mediaURL)
+	case mediaURL != "":
+		data, ct, err := s.downloadMedia(mediaURL)
 		if err != nil {
 			return nil, "", "", err
 		}
-
 		ext := filepath.Ext(mediaURL)
 		if ext == "" {
-			exts, _ := mime.ExtensionsByType(contentType)
-			if len(exts) > 0 {
+			if exts, _ := mime.ExtensionsByType(ct); len(exts) > 0 {
 				ext = exts[0]
 			}
 		}
-		filename = "media" + ext
+		if ext == "" {
+			return data, ct, "media", nil
+		}
+		return data, ct, "media" + ext, nil
 
-	} else {
+	default:
 		return nil, "", "", fmt.Errorf("é necessário fornecer media_url ou media_base64")
 	}
-
-	return mediaData, contentType, filename, nil
 }
 
 func (s *MultiTenantWhatsAppService) decodeBase64Media(base64Str, mimeType string) ([]byte, string, error) {
-	base64Str = strings.TrimSpace(base64Str)
+	b := strings.TrimSpace(base64Str)
 
-	if strings.HasPrefix(base64Str, "data:") {
-		if idx := strings.Index(base64Str, ","); idx != -1 {
-			base64Str = base64Str[idx+1:]
+	if strings.HasPrefix(b, "data:") {
+		if idx := strings.IndexByte(b, ','); idx != -1 {
+			b = b[idx+1:]
 		}
 	}
+	b = strings.ReplaceAll(b, "\\n", "")
+	b = strings.ReplaceAll(b, "\\r", "")
+	b = strings.TrimSpace(b)
 
-	base64Str = strings.ReplaceAll(base64Str, "\n", "")
-	base64Str = strings.ReplaceAll(base64Str, "\r", "")
-	base64Str = strings.TrimSpace(base64Str)
-
-	mediaData, err := base64.StdEncoding.DecodeString(base64Str)
+	data, err := base64.StdEncoding.DecodeString(b)
 	if err != nil {
 		return nil, "", fmt.Errorf("falha ao decodificar base64: %w", err)
 	}
 
-	contentType := mimeType
-	if contentType == "" {
-		contentType = http.DetectContentType(mediaData)
+	ct := mimeType
+	if ct == "" {
+		ct = http.DetectContentType(data)
 	}
-
-	return mediaData, contentType, nil
+	return data, ct, nil
 }
 
 func (s *MultiTenantWhatsAppService) downloadMedia(url string) ([]byte, string, error) {
@@ -611,7 +754,7 @@ func (s *MultiTenantWhatsAppService) downloadMedia(url string) ([]byte, string, 
 		return nil, "", fmt.Errorf("falha ao criar requisição: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("falha ao baixar mídia: %w", err)
 	}
@@ -626,82 +769,89 @@ func (s *MultiTenantWhatsAppService) downloadMedia(url string) ([]byte, string, 
 		return nil, "", fmt.Errorf("falha ao baixar mídia: status %d", resp.StatusCode)
 	}
 
-	mediaData, err := io.ReadAll(io.LimitReader(resp.Body, s.config.Server.MaxUploadSize))
+	limit := s.config.Server.MaxUploadSize
+	if limit <= 0 {
+		limit = 25 << 20 // fallback 25MB
+	}
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit))
 	if err != nil {
 		return nil, "", fmt.Errorf("falha ao ler mídia: %w", err)
 	}
 
-	contentType := resp.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = http.DetectContentType(mediaData)
+	ct := resp.Header.Get("Content-Type")
+	if ct == "" {
+		ct = http.DetectContentType(data)
 	}
-
-	return mediaData, contentType, nil
+	return data, ct, nil
 }
 
 func (s *MultiTenantWhatsAppService) determineMediaType(contentType string) whatsmeow.MediaType {
-	if strings.HasPrefix(contentType, "image/") {
+	switch {
+	case strings.HasPrefix(contentType, "image/"):
 		return whatsmeow.MediaImage
-	} else if strings.HasPrefix(contentType, "video/") {
+	case strings.HasPrefix(contentType, "video/"):
 		return whatsmeow.MediaVideo
-	} else if strings.HasPrefix(contentType, "audio/") {
+	case strings.HasPrefix(contentType, "audio/"):
 		return whatsmeow.MediaAudio
+	default:
+		return whatsmeow.MediaDocument
 	}
-	return whatsmeow.MediaDocument
 }
 
-func (s *MultiTenantWhatsAppService) buildMediaMessage(uploaded whatsmeow.UploadResponse, mediaData []byte, contentType, caption, filename string) *waProto.Message {
-	mediaType := s.determineMediaType(contentType)
+func (s *MultiTenantWhatsAppService) buildMediaMessage(uploaded whatsmeow.UploadResponse, mediaData []byte, contentType, caption, filename string) *waE2E.Message {
+	mt := s.determineMediaType(contentType)
+	size := uint64(len(mediaData))
 
-	switch mediaType {
+	switch mt {
 	case whatsmeow.MediaImage:
-		return &waProto.Message{
-			ImageMessage: &waProto.ImageMessage{
+		return &waE2E.Message{
+			ImageMessage: &waE2E.ImageMessage{
 				URL:           proto.String(uploaded.URL),
 				DirectPath:    proto.String(uploaded.DirectPath),
 				MediaKey:      uploaded.MediaKey,
 				Mimetype:      proto.String(contentType),
 				FileEncSHA256: uploaded.FileEncSHA256,
 				FileSHA256:    uploaded.FileSHA256,
-				FileLength:    proto.Uint64(uint64(len(mediaData))),
+				FileLength:    proto.Uint64(size),
 				Caption:       proto.String(caption),
 			},
 		}
 	case whatsmeow.MediaVideo:
-		return &waProto.Message{
-			VideoMessage: &waProto.VideoMessage{
+		return &waE2E.Message{
+			VideoMessage: &waE2E.VideoMessage{
 				URL:           proto.String(uploaded.URL),
 				DirectPath:    proto.String(uploaded.DirectPath),
 				MediaKey:      uploaded.MediaKey,
 				Mimetype:      proto.String(contentType),
 				FileEncSHA256: uploaded.FileEncSHA256,
 				FileSHA256:    uploaded.FileSHA256,
-				FileLength:    proto.Uint64(uint64(len(mediaData))),
+				FileLength:    proto.Uint64(size),
 				Caption:       proto.String(caption),
 			},
 		}
 	case whatsmeow.MediaAudio:
-		return &waProto.Message{
-			AudioMessage: &waProto.AudioMessage{
+		return &waE2E.Message{
+			AudioMessage: &waE2E.AudioMessage{
 				URL:           proto.String(uploaded.URL),
 				DirectPath:    proto.String(uploaded.DirectPath),
 				MediaKey:      uploaded.MediaKey,
 				Mimetype:      proto.String(contentType),
 				FileEncSHA256: uploaded.FileEncSHA256,
 				FileSHA256:    uploaded.FileSHA256,
-				FileLength:    proto.Uint64(uint64(len(mediaData))),
+				FileLength:    proto.Uint64(size),
 			},
 		}
 	default:
-		return &waProto.Message{
-			DocumentMessage: &waProto.DocumentMessage{
+		return &waE2E.Message{
+			DocumentMessage: &waE2E.DocumentMessage{
 				URL:           proto.String(uploaded.URL),
 				DirectPath:    proto.String(uploaded.DirectPath),
 				MediaKey:      uploaded.MediaKey,
 				Mimetype:      proto.String(contentType),
 				FileEncSHA256: uploaded.FileEncSHA256,
 				FileSHA256:    uploaded.FileSHA256,
-				FileLength:    proto.Uint64(uint64(len(mediaData))),
+				FileLength:    proto.Uint64(size),
 				FileName:      proto.String(filename),
 				Caption:       proto.String(caption),
 			},
@@ -710,18 +860,14 @@ func (s *MultiTenantWhatsAppService) buildMediaMessage(uploaded whatsmeow.Upload
 }
 
 func (s *MultiTenantWhatsAppService) Shutdown() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	s.logger.Info("Desconectando todas as sessões...")
-	for key, waClient := range s.clients {
-		if waClient.CancelQR != nil {
-			waClient.CancelQR()
+	s.clients.Range(func(key string, waClient *WhatsAppClient) {
+		if waClient != nil && waClient.cancelQR != nil {
+			waClient.cancelQR()
 		}
-		if waClient.Client != nil && waClient.Client.IsConnected() {
+		if waClient != nil && waClient.Client != nil && waClient.Client.IsConnected() {
 			waClient.Client.Disconnect()
 		}
-		s.logger.Infof("Sessão desconectada: %s", key)
-	}
-	s.clients = make(map[string]*WhatsAppClient)
+		s.clients.Delete(key)
+	})
 }

@@ -25,7 +25,7 @@ const (
 	Banner  = `
 ╔══════════════════════════════════════════════════════════╗
 ║                                                          ║
-║    WhatsApp Bot API (Multi-Tenant) - MOleniuk            ║
+║    WhatsApp Bot API (Multi Sessões) - MOleniuk           ║
 ║                    Version %s                         ║
 ║                                                          ║
 ╚══════════════════════════════════════════════════════════╝
@@ -36,7 +36,7 @@ func main() {
 	fmt.Printf(Banner, Version)
 
 	log := logger.New("[API] ", logger.INFO)
-	log.Info("Iniciando WhatsApp Bot API Multi-Tenant...")
+	log.Info("Iniciando WhatsApp Bot API Multi Sessões...")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -64,7 +64,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Falha ao inicializar serviço WhatsApp: %v", err)
 	}
-	log.Info("Serviço WhatsApp Multi-Tenant inicializado")
+	log.Info("Serviço WhatsApp Multi Sessões inicializado")
 
 	messageHandler := handlers.NewMultiTenantHandler(whatsappService, cfg, log)
 	sessionHandler := handlers.NewSessionHandler(whatsappService, log)
