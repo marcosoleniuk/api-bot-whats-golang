@@ -1,0 +1,168 @@
+{
+  "info": {
+    "name": "WhatsApp Bot API Multi Sessões MOleniuk",
+    "_postman_id": "9c5ad56a-2b7b-4f8f-9f06-8b8f7a5d65d1",
+    "description": "Collection com todos os endpoints da API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "apiToken", "value": "seu-api-token" },
+    { "key": "tenantSessionKey", "value": "sua-session-key" },
+    { "key": "waSessionKey", "value": "cliente-001" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/health"
+      }
+    },
+    {
+      "name": "Registrar sessão",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "apitoken", "value": "{{apiToken}}" },
+          { "key": "SESSIONKEY", "value": "{{tenantSessionKey}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"whatsappSessionKey\": \"{{waSessionKey}}\",\n  \"nomePessoa\": \"João Silva\",\n  \"emailPessoa\": \"joao@empresa.com\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/whatsapp/register"
+      }
+    },
+    {
+      "name": "Obter QR code",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "apitoken", "value": "{{apiToken}}" },
+          { "key": "SESSIONKEY", "value": "{{tenantSessionKey}}" }
+        ],
+        "url": "{{baseUrl}}/api/v1/whatsapp/qrcode/{{waSessionKey}}"
+      }
+    },
+    {
+      "name": "Listar sessões",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "apitoken", "value": "{{apiToken}}" },
+          { "key": "SESSIONKEY", "value": "{{tenantSessionKey}}" }
+        ],
+        "url": "{{baseUrl}}/api/v1/whatsapp/sessions"
+      }
+    },
+    {
+      "name": "Desconectar sessão",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "apitoken", "value": "{{apiToken}}" },
+          { "key": "SESSIONKEY", "value": "{{tenantSessionKey}}" }
+        ],
+        "url": "{{baseUrl}}/api/v1/whatsapp/disconnect/{{waSessionKey}}"
+      }
+    },
+    {
+      "name": "Deletar sessão",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          { "key": "apitoken", "value": "{{apiToken}}" },
+          { "key": "SESSIONKEY", "value": "{{tenantSessionKey}}" }
+        ],
+        "url": "{{baseUrl}}/api/v1/whatsapp/sessions/{{waSessionKey}}"
+      }
+    },
+    {
+      "name": "Enviar mensagem de texto",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "apitoken", "value": "{{apiToken}}" },
+          { "key": "SESSIONKEY", "value": "{{tenantSessionKey}}" },
+          { "key": "X-WhatsApp-Session-Key", "value": "{{waSessionKey}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"number\": \"5511999999999\",\n  \"text\": \"Olá!\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/messages/text"
+      }
+    },
+    {
+      "name": "Enviar mídia (URL)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "apitoken", "value": "{{apiToken}}" },
+          { "key": "SESSIONKEY", "value": "{{tenantSessionKey}}" },
+          { "key": "X-WhatsApp-Session-Key", "value": "{{waSessionKey}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"number\": \"5511999999999\",\n  \"caption\": \"Confira esta imagem\",\n  \"media_url\": \"https://picsum.photos/800/600\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/messages/media"
+      }
+    },
+    {
+      "name": "Enviar mídia (Base64)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "apitoken", "value": "{{apiToken}}" },
+          { "key": "SESSIONKEY", "value": "{{tenantSessionKey}}" },
+          { "key": "X-WhatsApp-Session-Key", "value": "{{waSessionKey}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"number\": \"5511999999999\",\n  \"caption\": \"Documento\",\n  \"media_base64\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==\",\n  \"mime_type\": \"image/png\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/messages/media"
+      }
+    },
+    {
+      "name": "Enviar texto (alias)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "apitoken", "value": "{{apiToken}}" },
+          { "key": "SESSIONKEY", "value": "{{tenantSessionKey}}" },
+          { "key": "X-WhatsApp-Session-Key", "value": "{{waSessionKey}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"number\": \"5511999999999\",\n  \"text\": \"Olá!\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/sendText"
+      }
+    },
+    {
+      "name": "Enviar mídia (alias)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "apitoken", "value": "{{apiToken}}" },
+          { "key": "SESSIONKEY", "value": "{{tenantSessionKey}}" },
+          { "key": "X-WhatsApp-Session-Key", "value": "{{waSessionKey}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"number\": \"5511999999999\",\n  \"caption\": \"Confira esta imagem\",\n  \"media_url\": \"https://picsum.photos/800/600\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/sendMedia"
+      }
+    }
+  ]
+}
