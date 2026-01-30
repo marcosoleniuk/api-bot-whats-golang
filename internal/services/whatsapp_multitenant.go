@@ -86,7 +86,6 @@ func (s *MultiTenantWhatsAppService) LoadExistingSessions() error {
 		s.logger.Infof("Processando sessão: %s (Status: %s, Phone: %s)",
 			session.WhatsAppSessionKey, session.Status, session.PhoneNumber)
 
-		// Se não tiver device_jid salvo, tenta localizar e persistir
 		if session.DeviceJID == "" && session.PhoneNumber != "" {
 			devices, listErr := s.container.GetAllDevices(context.Background())
 			if listErr != nil {
@@ -242,7 +241,6 @@ func (s *MultiTenantWhatsAppService) registerEventHandlers(client *whatsmeow.Cli
 
 		case *events.Disconnected:
 			s.logger.Warnf("Sessão %s desconectada do WhatsApp", session.WhatsAppSessionKey)
-			// Passa "" para manter phone_number e device_jid existentes (não sobrescrever)
 			if err := s.repository.UpdateStatus(session.ID, models.SessionStatusDisconnected, "", ""); err != nil {
 				s.logger.Errorf("Falha ao atualizar status: %v", err)
 			}
@@ -273,7 +271,6 @@ func (s *MultiTenantWhatsAppService) reconnectSession(session *models.WhatsAppSe
 	var deviceStore *store.Device
 	var err error
 
-	// Se temos device_jid salvo, tenta usar ele primeiro (mais preciso)
 	if session.DeviceJID != "" {
 		deviceJID, parseErr := types.ParseJID(session.DeviceJID)
 		if parseErr != nil {
@@ -287,7 +284,6 @@ func (s *MultiTenantWhatsAppService) reconnectSession(session *models.WhatsAppSe
 		}
 	}
 
-	// Fallback: buscar por JID do phone_number
 	if deviceStore == nil || deviceStore.ID == nil {
 		jid, parseErr := types.ParseJID(session.PhoneNumber + "@s.whatsapp.net")
 		if parseErr != nil {
@@ -301,7 +297,6 @@ func (s *MultiTenantWhatsAppService) reconnectSession(session *models.WhatsAppSe
 		}
 	}
 
-	// Fallback: localizar pelo usuário em todos os devices
 	if deviceStore == nil || deviceStore.ID == nil {
 		s.logger.Warnf("Device store não encontrado por JID. Tentando localizar por usuário %s", session.PhoneNumber)
 		devices, listErr := s.container.GetAllDevices(ctx)
@@ -317,12 +312,10 @@ func (s *MultiTenantWhatsAppService) reconnectSession(session *models.WhatsAppSe
 		}
 	}
 
-	// Se ainda não encontrou device store, cria um novo (sessão precisará escanear QR novamente)
 	if deviceStore == nil || deviceStore.ID == nil {
 		s.logger.Warnf("Device store não encontrado para sessão %s. Criando novo device (necessário novo QR code)", session.WhatsAppSessionKey)
 		deviceStore = s.container.NewDevice()
-		
-		// Atualiza status para pending pois precisará escanear QR novamente
+
 		if err := s.repository.UpdateStatus(session.ID, models.SessionStatusPending, "", ""); err != nil {
 			s.logger.Errorf("Falha ao atualizar status para pending: %v", err)
 		}
@@ -333,7 +326,6 @@ func (s *MultiTenantWhatsAppService) reconnectSession(session *models.WhatsAppSe
 	waLogger := logger.NewWhatsAppLogger(fmt.Sprintf("[WA:%s] ", session.WhatsAppSessionKey), logger.INFO)
 	client := whatsmeow.NewClient(deviceStore, waLogger)
 
-	// Sempre adiciona ao map (mesmo se precisar de novo QR)
 	whatsappClient := &WhatsAppClient{
 		Client:  client,
 		Session: session,
@@ -348,9 +340,7 @@ func (s *MultiTenantWhatsAppService) reconnectSession(session *models.WhatsAppSe
 
 	s.registerEventHandlers(client, session)
 
-	// Se o device já tem credenciais salvas, tenta reconectar
 	if client.Store.ID != nil {
-		// Conecta em goroutine para não bloquear o startup
 		go func() {
 			s.logger.Infof("Tentando conectar sessão %s...", session.WhatsAppSessionKey)
 			if err := client.Connect(); err != nil {
@@ -625,7 +615,12 @@ func (s *MultiTenantWhatsAppService) downloadMedia(url string) ([]byte, string, 
 	if err != nil {
 		return nil, "", fmt.Errorf("falha ao baixar mídia: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			s.logger.Errorf("falha ao fechar corpo da resposta: %v", err)
+		}
+	}(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", fmt.Errorf("falha ao baixar mídia: status %d", resp.StatusCode)

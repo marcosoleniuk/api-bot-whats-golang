@@ -159,12 +159,10 @@ func (r *SessionRepository) UpdateStatus(id uuid.UUID, status string, phoneNumbe
 		lastConnectedAt = &now
 	}
 
-	// Se phoneNumber/deviceJID forem vazios, não atualizar os campos (manter valores existentes)
 	var query string
 	var args []interface{}
 
 	if phoneNumber != "" && deviceJID != "" {
-		// Atualiza status, phone_number e device_jid
 		query = `
 			UPDATE whatsapp_sessions
 			SET status = $1, phone_number = $2, device_jid = $3, updated_at = $4, last_connected_at = $5
@@ -172,7 +170,6 @@ func (r *SessionRepository) UpdateStatus(id uuid.UUID, status string, phoneNumbe
 		`
 		args = []interface{}{status, phoneNumber, deviceJID, now, lastConnectedAt, id}
 	} else if phoneNumber != "" {
-		// Atualiza status e phone_number
 		query = `
 			UPDATE whatsapp_sessions
 			SET status = $1, phone_number = $2, updated_at = $3, last_connected_at = $4
@@ -180,7 +177,6 @@ func (r *SessionRepository) UpdateStatus(id uuid.UUID, status string, phoneNumbe
 		`
 		args = []interface{}{status, phoneNumber, now, lastConnectedAt, id}
 	} else if deviceJID != "" {
-		// Atualiza status e device_jid
 		query = `
 			UPDATE whatsapp_sessions
 			SET status = $1, device_jid = $2, updated_at = $3, last_connected_at = $4
@@ -188,7 +184,6 @@ func (r *SessionRepository) UpdateStatus(id uuid.UUID, status string, phoneNumbe
 		`
 		args = []interface{}{status, deviceJID, now, lastConnectedAt, id}
 	} else {
-		// Atualiza apenas status (mantém phone_number existente)
 		query = `
 			UPDATE whatsapp_sessions
 			SET status = $1, updated_at = $2, last_connected_at = $3

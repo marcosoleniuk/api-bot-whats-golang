@@ -1,4 +1,3 @@
--- Tabela para armazenar sessões de WhatsApp
 CREATE TABLE IF NOT EXISTS whatsapp_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     whatsapp_session_key VARCHAR(255) UNIQUE NOT NULL,
@@ -15,13 +14,11 @@ CREATE TABLE IF NOT EXISTS whatsapp_sessions (
     CONSTRAINT chk_status CHECK (status IN ('pending', 'connected', 'disconnected', 'error'))
 );
 
--- Índices para melhorar performance
 CREATE INDEX idx_whatsapp_sessions_key ON whatsapp_sessions(whatsapp_session_key);
 CREATE INDEX idx_whatsapp_sessions_email ON whatsapp_sessions(email_pessoa);
 CREATE INDEX idx_whatsapp_sessions_status ON whatsapp_sessions(status);
 CREATE INDEX idx_whatsapp_sessions_created_at ON whatsapp_sessions(created_at DESC);
 
--- Função para atualizar updated_at automaticamente
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -30,13 +27,11 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Trigger para atualizar updated_at
 CREATE TRIGGER update_whatsapp_sessions_updated_at
     BEFORE UPDATE ON whatsapp_sessions
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
--- Comentários nas colunas
 COMMENT ON TABLE whatsapp_sessions IS 'Armazena as sessões de WhatsApp de múltiplos usuários';
 COMMENT ON COLUMN whatsapp_sessions.id IS 'UUID único da sessão';
 COMMENT ON COLUMN whatsapp_sessions.whatsapp_session_key IS 'Chave única de identificação da sessão (ex: botwhat01)';

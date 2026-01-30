@@ -29,18 +29,21 @@ func (h *SessionHandler) RegisterSession(w http.ResponseWriter, r *http.Request)
 	if err := validator.ValidateJSON(r, &req); err != nil {
 		h.logger.Warnf("JSON inválido na requisição de registro: %v", err)
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(models.NewErrorResponse(
+		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
 			"Corpo da requisição inválido",
 			"INVALID_JSON",
 			map[string]string{"error": err.Error()},
 		))
+		if err != nil {
+			return
+		}
 		return
 	}
 
 	if req.WhatsAppSessionKey == "" || req.NomePessoa == "" || req.EmailPessoa == "" {
 		h.logger.Warn("Campos obrigatórios ausentes na requisição de registro")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(models.NewErrorResponse(
+		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
 			"Campos obrigatórios ausentes",
 			"VALIDATION_ERROR",
 			map[string]string{
@@ -49,6 +52,9 @@ func (h *SessionHandler) RegisterSession(w http.ResponseWriter, r *http.Request)
 				"emailPessoa":        "obrigatório",
 			},
 		))
+		if err != nil {
+			return
+		}
 		return
 	}
 
@@ -58,19 +64,25 @@ func (h *SessionHandler) RegisterSession(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		h.logger.Errorf("Falha ao registrar sessão: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(models.NewErrorResponse(
+		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
 			"Falha ao registrar sessão",
 			"REGISTRATION_FAILED",
 			map[string]string{"error": err.Error()},
 		))
+		if err != nil {
+			return
+		}
 		return
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(models.NewSuccessResponse(
+	err = json.NewEncoder(w).Encode(models.NewSuccessResponse(
 		"Sessão registrada com sucesso. Escaneie o QR code para conectar.",
 		response,
 	))
+	if err != nil {
+		return
+	}
 }
 
 func (h *SessionHandler) GetQRCode(w http.ResponseWriter, r *http.Request) {
@@ -79,11 +91,14 @@ func (h *SessionHandler) GetQRCode(w http.ResponseWriter, r *http.Request) {
 
 	if sessionKey == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(models.NewErrorResponse(
+		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
 			"sessionKey é obrigatório",
 			"VALIDATION_ERROR",
 			nil,
 		))
+		if err != nil {
+			return
+		}
 		return
 	}
 
@@ -91,22 +106,28 @@ func (h *SessionHandler) GetQRCode(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.logger.Warnf("Falha ao obter QR code para %s: %v", sessionKey, err)
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(models.NewErrorResponse(
+		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
 			"Falha ao obter QR code",
 			"QRCODE_NOT_FOUND",
 			map[string]string{"error": err.Error()},
 		))
+		if err != nil {
+			return
+		}
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(models.NewSuccessResponse(
+	err = json.NewEncoder(w).Encode(models.NewSuccessResponse(
 		"QR code obtido com sucesso",
 		map[string]interface{}{
 			"qr_code_base64": qrCode,
 			"session_key":    sessionKey,
 		},
 	))
+	if err != nil {
+		return
+	}
 }
 
 func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
@@ -114,11 +135,14 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.logger.Errorf("Falha ao listar sessões: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(models.NewErrorResponse(
+		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
 			"Falha ao listar sessões",
 			"LIST_FAILED",
 			map[string]string{"error": err.Error()},
 		))
+		if err != nil {
+			return
+		}
 		return
 	}
 
@@ -152,13 +176,16 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(models.NewSuccessResponse(
+	err = json.NewEncoder(w).Encode(models.NewSuccessResponse(
 		"Sessões listadas com sucesso",
 		map[string]interface{}{
 			"total":    len(list),
 			"sessions": list,
 		},
 	))
+	if err != nil {
+		return
+	}
 }
 
 func (h *SessionHandler) DisconnectSession(w http.ResponseWriter, r *http.Request) {
@@ -167,11 +194,14 @@ func (h *SessionHandler) DisconnectSession(w http.ResponseWriter, r *http.Reques
 
 	if sessionKey == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(models.NewErrorResponse(
+		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
 			"sessionKey é obrigatório",
 			"VALIDATION_ERROR",
 			nil,
 		))
+		if err != nil {
+			return
+		}
 		return
 	}
 
@@ -180,22 +210,28 @@ func (h *SessionHandler) DisconnectSession(w http.ResponseWriter, r *http.Reques
 	if err := h.service.DisconnectSession(sessionKey); err != nil {
 		h.logger.Errorf("Falha ao desconectar sessão %s: %v", sessionKey, err)
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(models.NewErrorResponse(
+		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
 			"Falha ao desconectar sessão",
 			"DISCONNECT_FAILED",
 			map[string]string{"error": err.Error()},
 		))
+		if err != nil {
+			return
+		}
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(models.NewSuccessResponse(
+	err := json.NewEncoder(w).Encode(models.NewSuccessResponse(
 		"Sessão desconectada com sucesso",
 		map[string]string{
 			"session_key": sessionKey,
 			"status":      "disconnected",
 		},
 	))
+	if err != nil {
+		return
+	}
 }
 
 func (h *SessionHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
@@ -204,11 +240,14 @@ func (h *SessionHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 
 	if sessionKey == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(models.NewErrorResponse(
+		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
 			"sessionKey é obrigatório",
 			"VALIDATION_ERROR",
 			nil,
 		))
+		if err != nil {
+			return
+		}
 		return
 	}
 
@@ -217,19 +256,25 @@ func (h *SessionHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 	if err := h.service.DeleteSession(sessionKey); err != nil {
 		h.logger.Errorf("Falha ao deletar sessão %s: %v", sessionKey, err)
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(models.NewErrorResponse(
+		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
 			"Falha ao deletar sessão",
 			"DELETE_FAILED",
 			map[string]string{"error": err.Error()},
 		))
+		if err != nil {
+			return
+		}
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(models.NewSuccessResponse(
+	err := json.NewEncoder(w).Encode(models.NewSuccessResponse(
 		"Sessão deletada com sucesso",
 		map[string]string{
 			"session_key": sessionKey,
 		},
 	))
+	if err != nil {
+		return
+	}
 }
