@@ -13,16 +13,15 @@ func AuthMiddleware(cfg *config.Config, log *logger.Logger) func(http.Handler) h
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			apiToken := r.Header.Get("apitoken")
-			sessionKey := r.Header.Get("SESSIONKEY")
 
-			if apiToken != cfg.Auth.APIToken || sessionKey != cfg.Auth.SessionKey {
-				log.Warnf("Unauthorized access attempt from %s - Token: %s, SessionKey: %s",
-					r.RemoteAddr, apiToken, sessionKey)
+			if apiToken != cfg.Auth.APIToken {
+				log.Warnf("Tentativa de acesso não autorizado de %s - Token: %s",
+					r.RemoteAddr, apiToken)
 
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				err := json.NewEncoder(w).Encode(models.NewErrorResponse(
-					"Invalid authentication credentials",
+					"Credenciais de autenticação inválidas",
 					"AUTH_INVALID",
 					nil,
 				))

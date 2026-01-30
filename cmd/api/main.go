@@ -7,6 +7,7 @@ import (
 	"boot-whatsapp-golang/internal/services"
 	"boot-whatsapp-golang/pkg/logger"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,16 +15,18 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/gorilla/mux"
+	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 )
 
 const (
-	Version = "1.0.0"
+	Version = "2.0.0"
 	Banner  = `
 ╔══════════════════════════════════════════════════════════╗
 ║                                                          ║
-║        WhatsApp Bot API - MOleniuk                       ║
-║                    Version %s                               ║
+║    WhatsApp Bot API (Multi-Tenant) - MOleniuk            ║
+║                    Version %s                         ║
 ║                                                          ║
 ╚══════════════════════════════════════════════════════════╝
 `
@@ -33,7 +36,7 @@ func main() {
 	fmt.Printf(Banner, Version)
 
 	log := logger.New("[API] ", logger.INFO)
-	log.Info("Iniciando WhatsApp Bot API...")
+	log.Info("Iniciando WhatsApp Bot API Multi-Tenant...")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -41,24 +44,36 @@ func main() {
 	}
 	log.Info("Configuração carregada com sucesso")
 
-	whatsappService, err := services.NewWhatsAppService(cfg, log)
+	db, err := sql.Open(cfg.Database.Driver, cfg.Database.DSN)
+	if err != nil {
+		log.Fatalf("Falha ao conectar ao banco de dados: %v", err)
+	}
+	defer func(db *sql.DB) {
+		err := db.Close()
+		if err != nil {
+			log.Errorf("Erro ao fechar conexão com banco de dados: %v", err)
+		}
+	}(db)
+
+	if err := db.Ping(); err != nil {
+		log.Fatalf("Falha ao verificar conexão com banco de dados: %v", err)
+	}
+	log.Info("Conectado ao banco de dados com sucesso")
+
+	whatsappService, err := services.NewMultiTenantWhatsAppService(cfg, db, log)
 	if err != nil {
 		log.Fatalf("Falha ao inicializar serviço WhatsApp: %v", err)
 	}
-	log.Info("Serviço WhatsApp inicializado")
+	log.Info("Serviço WhatsApp Multi-Tenant inicializado")
 
-	if err := whatsappService.Connect(); err != nil {
-		log.Fatalf("Falha ao conectar ao WhatsApp: %v", err)
-	}
-	log.Info("Conectado ao WhatsApp com sucesso")
+	messageHandler := handlers.NewMultiTenantHandler(whatsappService, cfg, log)
+	sessionHandler := handlers.NewSessionHandler(whatsappService, log)
 
-	handler := handlers.NewHandler(whatsappService, cfg, log)
-
-	mux := setupRouter(handler, cfg, log)
+	router := setupRouter(messageHandler, sessionHandler, cfg, log)
 
 	server := &http.Server{
 		Addr:         ":" + cfg.Server.Port,
-		Handler:      mux,
+		Handler:      router,
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,
 		IdleTimeout:  cfg.Server.IdleTimeout,
@@ -68,7 +83,14 @@ func main() {
 	go func() {
 		log.Infof("Servidor API escutando na porta %s", cfg.Server.Port)
 		log.Infof("Health check disponível em: http://localhost:%s/health", cfg.Server.Port)
-		log.Infof("Endpoints da API disponíveis em: http://localhost:%s/api/v1/*", cfg.Server.Port)
+		log.Info("Endpoints disponíveis:")
+		log.Info("  POST /api/v1/whatsapp/register - Registrar nova sessão WhatsApp")
+		log.Info("  GET  /api/v1/whatsapp/qrcode/{sessionKey} - Obter QR code de sessão")
+		log.Info("  GET  /api/v1/whatsapp/sessions - Listar todas as sessões")
+		log.Info("  POST /api/v1/whatsapp/disconnect/{sessionKey} - Desconectar sessão")
+		log.Info("  DELETE /api/v1/whatsapp/sessions/{sessionKey} - Deletar sessão")
+		log.Info("  POST /api/v1/messages/text - Enviar mensagem de texto")
+		log.Info("  POST /api/v1/messages/media - Enviar mensagem com mídia")
 
 		serverErrors <- server.ListenAndServe()
 	}()
@@ -95,55 +117,43 @@ func main() {
 			}
 		}
 
-		log.Info("Desconectando do WhatsApp...")
-		whatsappService.Disconnect()
+		log.Info("Desconectando todas as sessões WhatsApp...")
+		whatsappService.Shutdown()
 
 		log.Info("Servidor encerrado com sucesso")
 	}
 }
 
-func setupRouter(h *handlers.Handler, cfg *config.Config, log *logger.Logger) *http.ServeMux {
-	mux := http.NewServeMux()
+func setupRouter(mh *handlers.MultiTenantHandler, sh *handlers.SessionHandler, cfg *config.Config, log *logger.Logger) *mux.Router {
+	r := mux.NewRouter()
 
-	mux.HandleFunc("/health", h.HealthCheck)
-	mux.HandleFunc("/", h.NotFound)
+	r.HandleFunc("/health", mh.Health).Methods("GET")
 
-	apiMux := http.NewServeMux()
-	apiMux.HandleFunc("/api/v1/messages/text", methodFilter(h.SendTextMessage, http.MethodPost, h))
-	apiMux.HandleFunc("/api/v1/messages/media", methodFilter(h.SendMediaMessage, http.MethodPost, h))
+	api := r.PathPrefix("/api/v1").Subrouter()
 
-	apiMux.HandleFunc("/sendText", methodFilter(h.SendTextMessage, http.MethodPost, h))
-	apiMux.HandleFunc("/sendMedia", methodFilter(h.SendMediaMessage, http.MethodPost, h))
+	api.HandleFunc("/whatsapp/register", sh.RegisterSession).Methods("POST")
+	api.HandleFunc("/whatsapp/qrcode/{sessionKey}", sh.GetQRCode).Methods("GET")
+	api.HandleFunc("/whatsapp/sessions", sh.ListSessions).Methods("GET")
+	api.HandleFunc("/whatsapp/disconnect/{sessionKey}", sh.DisconnectSession).Methods("POST")
+	api.HandleFunc("/whatsapp/sessions/{sessionKey}", sh.DeleteSession).Methods("DELETE")
 
-	handler := applyMiddleware(
-		apiMux,
-		middleware.RecoveryMiddleware(log),
-		middleware.LoggingMiddleware(log),
-		middleware.CORSMiddleware(),
-		middleware.ContentTypeMiddleware(),
-		middleware.AuthMiddleware(cfg, log),
-	)
+	api.HandleFunc("/messages/text", mh.SendTextMessage).Methods("POST")
+	api.HandleFunc("/messages/media", mh.SendMediaMessage).Methods("POST")
 
-	mux.Handle("/api/", handler)
-	mux.Handle("/sendText", handler)
-	mux.Handle("/sendMedia", handler)
+	api.HandleFunc("/sendText", mh.SendTextMessage).Methods("POST")
+	api.HandleFunc("/sendMedia", mh.SendMediaMessage).Methods("POST")
 
-	return mux
-}
+	r.Use(middleware.RecoveryMiddleware(log))
+	r.Use(middleware.LoggingMiddleware(log))
+	r.Use(middleware.CORSMiddleware())
+	r.Use(middleware.ContentTypeMiddleware())
 
-func methodFilter(handler http.HandlerFunc, allowedMethod string, h *handlers.Handler) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != allowedMethod {
-			h.MethodNotAllowed(w, r)
-			return
-		}
-		handler(w, r)
-	}
-}
+	api.Use(func(next http.Handler) http.Handler {
+		return middleware.AuthMiddleware(cfg, log)(next)
+	})
 
-func applyMiddleware(handler http.Handler, middleware ...func(http.Handler) http.Handler) http.Handler {
-	for i := len(middleware) - 1; i >= 0; i-- {
-		handler = middleware[i](handler)
-	}
-	return handler
+	r.NotFoundHandler = http.HandlerFunc(mh.NotFound)
+	r.MethodNotAllowedHandler = http.HandlerFunc(mh.MethodNotAllowed)
+
+	return r
 }

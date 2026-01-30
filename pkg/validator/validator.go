@@ -34,21 +34,3 @@ func ValidateJSON(r *http.Request, v interface{}) error {
 
 	return nil
 }
-
-func ValidateMimeType(mimeType string) bool {
-	validTypes := []string{
-		"image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp",
-		"video/mp4", "video/mpeg", "video/quicktime",
-		"audio/mpeg", "audio/ogg", "audio/wav",
-		"application/pdf", "application/msword",
-		"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-	}
-
-	for _, valid := range validTypes {
-		if mimeType == valid {
-			return true
-		}
-	}
-
-	return false
-}
