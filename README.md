@@ -3,181 +3,56 @@
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat&logo=docker)](https://www.docker.com/)
-[![Version](https://img.shields.io/badge/version-2.0.0-blue)](https://github.com/marcosoleniuk/api-bot-whats-golang)
-[![Security](https://img.shields.io/badge/security-multi--tenant%20isolation-green)](SECURITY_UPDATE.md)
 
-Uma API REST profissional para gerenciamento de múltiplas sessões WhatsApp construída em Go, com arquitetura Multi Sessões, suporte a Docker e configuração via variáveis de ambiente.
+API REST em Go para gerenciar múltiplas sessões do WhatsApp com isolamento por `SESSIONKEY`, suporte a Docker e banco SQLite/PostgreSQL.
 
----
+## ✅ Principais recursos
 
-## 🔐 Importante - Versão 2.0 com Isolamento Multi Sessões
+- Multi sessões com isolamento por `SESSIONKEY`
+- Autenticação dupla: `API_TOKEN` + `SESSIONKEY`
+- QR code automático com atualização no banco
+- Envio de mídia (URL/Base64)
+- SQLite e PostgreSQL
 
-**A partir da versão 2.0, implementamos isolamento completo de dados por tenant!**
+## 🚀 Início rápido
 
-- 🔒 Cada `SESSION_KEY` funciona como namespace isolado
-- ✅ Impossível acessar dados de outros tenants
-- ⚠️ Header `SESSIONKEY` agora é **obrigatório** em todas as requisições
-- 📖 Veja [SECURITY_UPDATE.md](SECURITY_UPDATE.md) para detalhes da migração
+### 1) Configurar ambiente
 
-**Migrando da v1.x?** Execute a migração `003_add_tenant_id.sql` e consulte a documentação de atualização.
-
----
-
-## 🚀 Características
-
-- ✅ **Multi Sessões com Isolamento**: Gerencie múltiplas sessões WhatsApp com isolamento completo por tenant
-- 🔒 **Segurança por Tenant**: Cada `SESSION_KEY` só acessa suas próprias sessões (isolamento total)
-- ✅ **Arquitetura Profissional**: Estrutura em camadas (handlers, services, middleware, repository)
-- ✅ **Configuração via Ambiente**: Todas as configurações através de variáveis de ambiente
-- ✅ **Logging Estruturado**: Sistema de logs profissional com níveis e contexto
-- ✅ **Middleware de Autenticação**: Proteção dupla com API Token (global) e Session Key (tenant)
-- ✅ **Validação de Dados**: Validação robusta de entrada com feedback claro
-- ✅ **Health Check**: Endpoint de monitoramento com status de conexões
-- ✅ **Graceful Shutdown**: Desligamento elegante do servidor
-- ✅ **Docker Ready**: Dockerfile multi-stage otimizado com Alpine Linux
-- ✅ **Suporte a Mídia**: Envio de imagens, vídeos, áudios e documentos (URL e Base64)
-- ✅ **Gerenciamento de Sessões**: Criação, listagem, desconexão e exclusão de sessões
-- ✅ **QR Code**: Geração e atualização automática de QR codes para autenticação
-- ✅ **Banco de Dados**: Suporte a PostgreSQL e SQLite3
-- ✅ **Persistência**: Sessões persistidas com reconexão automática
-- ✅ **API RESTful**: Endpoints bem estruturados e documentados
-
-## 📋 Pré-requisitos
-
-- Go 1.25 ou superior
-- SQLite3 ou PostgreSQL
-- Docker e Docker Compose (opcional)
-
-## 🔧 Instalação
-
-### Usando Go
-
-1. Clone o repositório:
-
-```bash
-git clone https://github.com/marcosoleniuk/api-bot-whats-golang.git
-cd api-bot-whats-golang
-```
-
-2. Copie o arquivo de exemplo de variáveis de ambiente:
+Copie e edite o arquivo de exemplo:
 
 ```bash
 cp .env.example .env
 ```
 
-3. Edite o arquivo `.env` e configure suas credenciais:
+Exemplo mínimo:
 
 ```env
-# Autenticação (OBRIGATÓRIO)
-API_TOKEN=sua-api-key-segura-aqui
-SESSION_KEY=sua-session-key-segura-aqui
-
-# Banco de Dados - Escolha uma das opções:
-
-# Opção 1: SQLite (recomendado para desenvolvimento/teste)
+API_TOKEN=seu-token
+SESSION_KEY=sua-session-key
 DB_DRIVER=sqlite3
 DB_DSN=file:whatsapp.db?_foreign_keys=on
-
-# Opção 2: PostgreSQL (recomendado para produção)
-# DB_DRIVER=postgres
-# DB_DSN=postgres://usuario:senha@localhost:5432/whatsapp_bot?sslmode=disable
 ```
 
-**💡 Dica:** Gere tokens seguros em: https://www.strongdm.com/tools/api-key-generator
-
-**🔒 Importante - Isolamento Multi Sessões:**
-
-- `API_TOKEN`: Token global compartilhado (autentica o sistema)
-- `SESSION_KEY`: Identificador único do tenant/cliente (isola dados)
-- Cada `SESSION_KEY` diferente cria um tenant separado
-- Tenants não conseguem ver ou acessar sessões de outros tenants
-
-4. Instale as dependências:
+### 2) Rodar com Go
 
 ```bash
 go mod download
-```
-
-5. Execute a aplicação:
-
-```bash
 go run cmd/api/main.go
 ```
 
-### Usando Docker
-
-1. Clone o repositório:
-
-```bash
-git clone https://github.com/marcosoleniuk/api-bot-whats-golang.git
-cd api-bot-whats-golang
-```
-
-2. Copie e configure o `.env`:
-
-```bash
-cp .env.example .env
-```
-
-**⚠️ IMPORTANTE:** Edite o arquivo `.env` e configure pelo menos:
-
-- `API_TOKEN` - Token de autenticação da API (obrigatório)
-- `SESSION_KEY` - Identificador do tenant/cliente (obrigatório)
-- `DB_DRIVER` - Driver do banco (sqlite3 ou postgres)
-- `DB_DSN` - String de conexão do banco
-
-**💡 Dica:** Gere tokens seguros em: https://www.strongdm.com/tools/api-key-generator
-
-**🔒 Segurança Multi Sessões:**
-
-- O `SESSION_KEY` identifica e isola cada tenant/cliente
-- Cada cliente deve ter seu próprio `SESSION_KEY` único
-- Um tenant **nunca** vê sessões de outros tenants
-
-3. Execute com Docker Compose:
+### 3) Rodar com Docker
 
 ```bash
 docker-compose up -d
 ```
 
-4. Veja os logs:
+## 🔐 Isolamento por sessão
 
-```bash
-docker-compose logs -f
-```
+Cada `SESSIONKEY` é um namespace isolado. Uma sessão **nunca** vê dados de outra.
 
-## 📱 Gerenciamento de Sessões Multi Sessões
+## 📌 Fluxo básico
 
-Este sistema permite gerenciar múltiplas sessões WhatsApp simultaneamente com **isolamento completo por tenant**.
-
-### 🔒 Como Funciona o Isolamento
-
-- **API_TOKEN**: Autentica o acesso ao sistema (compartilhado)
-- **SESSION_KEY**: Identifica o tenant/cliente (único por cliente)
-- Cada `SESSION_KEY` funciona como um "namespace" isolado
-- Um tenant **só vê e gerencia suas próprias sessões**
-
-### Exemplo de Isolamento
-
-```bash
-# Cliente A (SESSION_KEY: cliente-a-123)
-curl http://localhost:8080/api/v1/whatsapp/sessions \
-  -H "apitoken: TOKEN_GLOBAL" \
-  -H "SESSIONKEY: cliente-a-123"
-# Retorna: Apenas sessões do Cliente A
-
-# Cliente B (SESSION_KEY: cliente-b-456)
-curl http://localhost:8080/api/v1/whatsapp/sessions \
-  -H "apitoken: TOKEN_GLOBAL" \
-  -H "SESSIONKEY: cliente-b-456"
-# Retorna: Apenas sessões do Cliente B
-```
-
-Cada sessão WhatsApp representa uma conta WhatsApp conectada dentro do namespace do tenant.
-
-### Primeiro Uso
-
-1. **Registrar uma nova sessão:**
+1. Registrar sessão
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/whatsapp/register \
@@ -185,175 +60,50 @@ curl -X POST http://localhost:8080/api/v1/whatsapp/register \
   -H "SESSIONKEY: sua-session-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "session_key": "cliente-empresa-001",
-    "nome_pessoa": "João Silva",
-    "email_pessoa": "joao@empresa.com"
+    "whatsappSessionKey": "cliente-001",
+    "nomePessoa": "João Silva",
+    "emailPessoa": "joao@empresa.com"
   }'
 ```
 
-2. **Obter o QR Code para autenticação:**
+2. Obter QR code
 
 ```bash
-curl -X GET http://localhost:8080/api/v1/whatsapp/qrcode/cliente-empresa-001 \
+curl http://localhost:8080/api/v1/whatsapp/qrcode/cliente-001 \
   -H "apitoken: seu-api-token" \
   -H "SESSIONKEY: sua-session-key"
 ```
 
-3. **Escanear o QR Code:**
-   - Abra o WhatsApp no seu celular
-   - Vá em **Configurações** > **Aparelhos Conectados** > **Conectar um Aparelho**
-   - Escaneie o QR Code retornado pela API
-
-4. **Verificar status da conexão:**
+3. Enviar mensagem
 
 ```bash
-curl -X GET http://localhost:8080/api/v1/whatsapp/sessions \
+curl -X POST http://localhost:8080/api/v1/messages/text \
   -H "apitoken: seu-api-token" \
-  -H "SESSIONKEY: sua-session-key"
+  -H "SESSIONKEY: sua-session-key" \
+  -H "Content-Type: application/json" \
+  -d '{"sessionKey":"cliente-001","number":"554499999999","text":"Olá"}'
 ```
 
-### Gestão de Sessões
+## ℹ️ Observações
 
-**Listar suas sessões (apenas do seu tenant):**
+- Se o QR expirar, um novo é gerado automaticamente.
+- Para re-registrar uma `whatsappSessionKey`, chame o `/register` novamente no mesmo tenant e escaneie o QR retornado.
 
-```bash
-curl -X GET http://localhost:8080/api/v1/whatsapp/sessions \
-  -H "apitoken: seu-api-token" \
-  -H "SESSIONKEY: sua-session-key"
-```
+### 📎 Endpoints principais
 
-**⚠️ Nota de Segurança:** Este endpoint retorna **apenas as sessões associadas ao seu SESSION_KEY**. Você não verá sessões de outros tenants/clientes.
-
-**Desconectar uma sessão (sem deletar dados):**
-
-```bash
-curl -X POST http://localhost:8080/api/v1/whatsapp/disconnect/cliente-empresa-001 \
-  -H "apitoken: seu-api-token" \
-  -H "SESSIONKEY: sua-session-key"
-```
-
-**Deletar uma sessão permanentemente:**
-
-```bash
-curl -X DELETE http://localhost:8080/api/v1/whatsapp/sessions/cliente-empresa-001 \
-  -H "apitoken: seu-api-token" \
-  -H "SESSIONKEY: sua-session-key"
-```
+- `POST /api/v1/whatsapp/register`
+- `GET /api/v1/whatsapp/qrcode/{sessionKey}`
+- `GET /api/v1/whatsapp/sessions`
+- `POST /api/v1/whatsapp/disconnect/{sessionKey}`
+- `DELETE /api/v1/whatsapp/sessions/{sessionKey}`
 
 ## 🔌 API Endpoints
-
-### 🔒 Autenticação e Isolamento
-
-**Todas as requisições requerem dois headers obrigatórios:**
-
-```
-apitoken: seu-api-token         # Token global de autenticação
-SESSIONKEY: sua-session-key     # Identificador do tenant (isola dados)
-Content-Type: application/json
-```
-
-**Importante:**
-
-- ⚠️ O `apitoken` autentica o acesso ao sistema
-- 🔒 O `SESSIONKEY` determina qual tenant você é e quais dados você pode acessar
-- ✅ Requisições sem `SESSIONKEY` serão rejeitadas com **401 Unauthorized**
-- 🚫 Você **nunca** verá dados de outros tenants, independente do endpoint
-
-### Gerenciamento de Sessões
-
-#### 1. Registrar Nova Sessão
-
-```http
-POST /api/v1/whatsapp/register
-```
-
-**Body:**
-
-```json
-{
-  "session_key": "cliente-empresa-001",
-  "nome_pessoa": "João Silva",
-  "email_pessoa": "joao@empresa.com"
-}
-```
-
-**Resposta:**
-
-```json
-{
-  "status": "success",
-  "message": "Sessão registrada com sucesso. Use o endpoint /qrcode para obter o QR code.",
-  "data": {
-    "session_key": "cliente-empresa-001",
-    "status": "pending",
-    "created_at": "2026-01-30T10:30:00Z"
-  }
-}
-```
-
-#### 2. Obter QR Code de Sessão
-
-```http
-GET /api/v1/whatsapp/qrcode/{sessionKey}
-```
-
-**Resposta:**
-
-```json
-{
-  "status": "success",
-  "data": {
-    "qr_code": "data:image/png;base64,iVBORw0KGgoAAAANS...",
-    "expires_at": "2026-01-30T10:32:00Z",
-    "session_status": "pending"
-  }
-}
-```
-
-#### 3. Listar Sessões do Tenant
-
-```http
-GET /api/v1/whatsapp/sessions
-```
-
-**🔒 Isolamento de Segurança:**
-
-- Retorna **apenas** sessões associadas ao `SESSIONKEY` do header
-- Impossível ver sessões de outros tenants
-- Filtro aplicado automaticamente no backend
-
-**Resposta:**
-
-```json
-{
-  "status": "success",
-  "data": {
-    "sessions": [
-      {
-        "id": "550e8400-e29b-41d4-a716-446655440000",
-        "session_key": "cliente-empresa-001",
-        "nome_pessoa": "João Silva",
-        "email_pessoa": "joao@empresa.com",
-        "phone_number": "5511999999999",
-        "status": "connected",
-        "created_at": "2026-01-30T10:00:00Z",
-        "last_connected_at": "2026-01-30T10:30:00Z"
-      }
-    ],
-    "total": 1
-  }
-}
-```
-
-**Nota:** O campo `tenant_id` não é exposto na API por segurança
-
-````
 
 #### 4. Desconectar Sessão
 
 ```http
 POST /api/v1/whatsapp/disconnect/{sessionKey}
-````
+```
 
 **Resposta:**
 
@@ -536,11 +286,11 @@ boot-whatsapp-golang/
 │   │   └── session_repository.go      # Camada de acesso aos dados
 │   └── services/
 │       ├── whatsapp.go                # Serviço WhatsApp (compatibilidade)
-│       └── whatsapp_multitenant.go    # Serviço WhatsApp Multi Sessões
+│       └── whatsapp_tenant.go    # Serviço WhatsApp Multi Sessões
 ├── migrations/
 │   ├── 001_create_whatsapp_sessions.sql  # Migração inicial
 │   ├── 002_add_device_jid.sql            # Adiciona campo device_jid
-│   └── 003_add_tenant_id.sql             # Adiciona isolamento Multi Sessões
+│   └── 003_add_sessão_id.sql             # Adiciona isolamento Multi Sessões
 ├── pkg/
 │   ├── logger/
 │   │   └── logger.go                  # Sistema de logging estruturado
@@ -553,8 +303,7 @@ boot-whatsapp-golang/
 ├── go.mod                             # Dependências Go
 ├── go.sum                             # Checksums das dependências
 ├── LICENSE                            # Licença MIT
-├── README.md                          # Documentação
-└── SECURITY_UPDATE.md                 # Documentação de segurança Multi Sessões
+└── README.md                          # Documentação
 ```
 
 ## 🔒 Segurança e Isolamento Multi Sessões
@@ -563,21 +312,21 @@ boot-whatsapp-golang/
 
 1. **API_TOKEN** (Camada Global)
    - Autentica o acesso ao sistema
-   - Compartilhado entre todos os tenants/clientes
+   - Compartilhado entre todos os sessãos/clientes
    - Valida que a requisição é legítima
 
-2. **SESSION_KEY** (Camada de Tenant)
-   - Identifica e isola cada tenant/cliente
-   - Único para cada tenant
+2. **SESSION_KEY** (Camada de Sessão)
+   - Identifica e isola cada sessão/cliente
+   - Único para cada sessão
    - Determina quais dados podem ser acessados
 
 ### Isolamento de Dados
 
-- ✅ **Isolamento Total por Tenant**: Cada `SESSION_KEY` funciona como namespace isolado
-- ✅ **Impossível Cruzar Dados**: Um tenant nunca vê dados de outros tenants
-- ✅ **Filtros Automáticos**: Backend aplica filtros por tenant em todas as queries
-- ✅ **Validação de Propriedade**: Operações validam que o recurso pertence ao tenant
-- ✅ **Logs por Tenant**: Todas as ações são registradas com identificação do tenant
+- ✅ **Isolamento Total por Sessão**: Cada `SESSION_KEY` funciona como namespace isolado
+- ✅ **Impossível Cruzar Dados**: Uma sessão nunca vê dados de outros sessões
+- ✅ **Filtros Automáticos**: Backend aplica filtros por sessão em todas as queries
+- ✅ **Validação de Propriedade**: Operações validam que o recurso pertence à sessão
+- ✅ **Logs por Sessão**: Todas as ações são registradas com identificação da sessão
 
 ### Recursos de Segurança
 
@@ -645,11 +394,11 @@ Todos os erros seguem um formato padronizado JSON:
 | ----------------------- | -------------------------------------------- | ----------- |
 | `AUTH_INVALID`          | Token ou session key inválidos               | 401         |
 | `SESSION_KEY_REQUIRED`  | Header SESSIONKEY ausente (obrigatório)      | 401         |
-| `UNAUTHORIZED`          | Tentativa de acessar recurso de outro tenant | 401         |
+| `UNAUTHORIZED`          | Tentativa de acessar recurso de outro sessão | 401         |
 | `INVALID_JSON`          | Corpo da requisição malformado               | 400         |
 | `VALIDATION_ERROR`      | Dados de entrada inválidos                   | 400         |
 | `INVALID_PHONE`         | Formato de número de telefone inválido       | 400         |
-| `SESSION_NOT_FOUND`     | Sessão WhatsApp não encontrada neste tenant  | 404         |
+| `SESSION_NOT_FOUND`     | Sessão WhatsApp não encontrada neste sessão  | 404         |
 | `SESSION_NOT_CONNECTED` | Sessão não está conectada                    | 400         |
 | `SEND_FAILED`           | Falha ao enviar mensagem                     | 500         |
 | `MEDIA_DOWNLOAD_FAILED` | Falha ao baixar mídia                        | 500         |
@@ -668,12 +417,12 @@ Todos os erros seguem um formato padronizado JSON:
 }
 ```
 
-**Tentativa de acessar sessão de outro tenant:**
+**Tentativa de acessar sessão de outra sessão:**
 
 ```json
 {
   "status": "error",
-  "message": "Sessão não encontrada para este tenant",
+  "message": "Sessão não encontrada para este sessão",
   "code": "SESSION_NOT_FOUND",
   "timestamp": "2026-01-30T10:30:00Z"
 }
@@ -937,14 +686,14 @@ Este projeto está sob a licença MIT. Veja o arquivo [LICENSE](LICENSE) para ma
 
 #### O que mudou na versão 2.0?
 
-A partir da versão 2.0, implementamos isolamento completo por tenant. Cada `SESSION_KEY` funciona como um namespace isolado, garantindo que tenants não vejam ou acessem dados de outros tenants.
+A partir da versão 2.0, implementamos isolamento completo por sessão. Cada `SESSION_KEY` funciona como um namespace isolado, garantindo que sessãos não vejam ou acessem dados de outros sessãos.
 
 #### Como funciona o isolamento de dados?
 
 - O `API_TOKEN` autentica o acesso ao sistema (compartilhado)
-- O `SESSION_KEY` identifica o tenant e isola seus dados (único por cliente)
-- Todas as queries são automaticamente filtradas por `tenant_id`
-- É impossível acessar dados de outros tenants, mesmo tentando
+- O `SESSION_KEY` identifica o sessão e isola seus dados (único por cliente)
+- Todas as queries são automaticamente filtradas por `sessão_id`
+- É impossível acessar dados de outros sessãos, mesmo tentando
 
 #### Posso ter vários clientes usando o mesmo sistema?
 
@@ -956,21 +705,21 @@ A API retornará `401 Unauthorized`. O header `SESSIONKEY` é **obrigatório** e
 
 #### Como migrar sessões existentes para o novo sistema?
 
-Execute a migração `003_add_tenant_id.sql` no banco de dados. Sessões antigas receberão `tenant_id = 'default'`. Use `SESSIONKEY: default` para acessá-las. Veja [SECURITY_UPDATE.md](SECURITY_UPDATE.md) para detalhes.
+Execute a migração `003_add_sessão_id.sql` no banco de dados. Sessões antigas receberão `sessão_id = 'default'`. Use `SESSIONKEY: default` para acessá-las.
 
 ### 📱 WhatsApp e Sessões
 
 #### Como adicionar múltiplas sessões WhatsApp?
 
-Use o endpoint `/api/v1/whatsapp/register` para cada nova sessão com um `session_key` único dentro do seu tenant.
+Use o endpoint `/api/v1/whatsapp/register` para cada nova sessão com um `session_key` único dentro do seu sessão.
 
 #### A sessão precisa ser reautenticada toda vez?
 
 Não. As sessões são persistidas no banco de dados e reconectam automaticamente.
 
-#### Quantas sessões posso ter por tenant?
+#### Quantas sessões posso ter por sessão?
 
-Não há limite técnico. Cada tenant pode ter quantas sessões WhatsApp quiser, limitado apenas pelos recursos do servidor.
+Não há limite técnico. Cada sessão pode ter quantas sessões WhatsApp quiser, limitado apenas pelos recursos do servidor.
 
 ### 🚀 Produção e Infraestrutura
 
@@ -1070,15 +819,15 @@ cp whatsapp.db whatsapp_v1_backup.db
 
 ```bash
 # PostgreSQL
-psql -h localhost -U usuario -d whatsapp_bot -f migrations/003_add_tenant_id.sql
+psql -h localhost -U usuario -d whatsapp_bot -f migrations/003_add_sessão_id.sql
 
 # SQLite
-sqlite3 whatsapp.db < migrations/003_add_tenant_id.sql
+sqlite3 whatsapp.db < migrations/003_add_sessão_id.sql
 ```
 
 ### 3. Atualizar Sessões Existentes
 
-Sessões antigas receberão `tenant_id = 'default'`. Para acessá-las:
+Sessões antigas receberão `sessão_id = 'default'`. Para acessá-las:
 
 ```bash
 curl http://localhost:8080/api/v1/whatsapp/sessions \
@@ -1086,14 +835,14 @@ curl http://localhost:8080/api/v1/whatsapp/sessions \
   -H "SESSIONKEY: default"
 ```
 
-### 4. Migrar Sessões para Novos Tenants (Opcional)
+### 4. Migrar Sessões para Novas Sessões (Opcional)
 
-Se você quer associar sessões antigas a tenants específicos:
+Se você quer associar sessões antigas a sessões específicos:
 
 ```sql
 -- PostgreSQL/SQLite
 UPDATE whatsapp_sessions
-SET tenant_id = 'novo-tenant-id'
+SET sessão_id = 'novo-sessão-id'
 WHERE whatsapp_session_key = 'sessao-especifica';
 ```
 
@@ -1113,12 +862,10 @@ fetch("/api/v1/whatsapp/sessions", {
 fetch("/api/v1/whatsapp/sessions", {
   headers: {
     apitoken: "TOKEN",
-    SESSIONKEY: "seu-tenant-id", // ← NOVO: Obrigatório
+    SESSIONKEY: "seu-sessao-id", // ← NOVO: Obrigatório
   },
 });
 ```
-
-Para mais detalhes, consulte [SECURITY_UPDATE.md](SECURITY_UPDATE.md).
 
 ## �📊 Status do Projeto
 
