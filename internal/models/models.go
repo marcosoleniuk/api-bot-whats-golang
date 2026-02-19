@@ -105,3 +105,87 @@ func NewErrorResponse(message, code string, details map[string]string) *ErrorRes
 		Timestamp: time.Now(),
 	}
 }
+
+// Webhook models
+type Webhook struct {
+	ID              uuid.UUID         `json:"id" db:"id"`
+	SessionID       uuid.UUID         `json:"session_id" db:"session_id"`
+	TenantID        string            `json:"tenant_id" db:"tenant_id"`
+	URL             string            `json:"url" db:"url"`
+	Events          []string          `json:"events" db:"events"`
+	Headers         map[string]string `json:"headers,omitempty" db:"headers"`
+	Active          bool              `json:"active" db:"active"`
+	CreatedAt       time.Time         `json:"created_at" db:"created_at"`
+	UpdatedAt       time.Time         `json:"updated_at" db:"updated_at"`
+	LastTriggeredAt *time.Time        `json:"last_triggered_at,omitempty" db:"last_triggered_at"`
+}
+
+type RegisterWebhookRequest struct {
+	URL     string            `json:"url" validate:"required,http_url"`
+	Events  []string          `json:"events" validate:"required"`
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
+type WebhookPayload struct {
+	Event      string      `json:"event"`
+	SessionKey string      `json:"session_key"`
+	TenantID   string      `json:"tenant_id"`
+	Timestamp  time.Time   `json:"timestamp"`
+	Data       interface{} `json:"data"`
+}
+
+type MessageWebhookData struct {
+	MessageID string    `json:"message_id,omitempty"`
+	From      string    `json:"from,omitempty"`
+	To        string    `json:"to,omitempty"`
+	Type      string    `json:"type"`
+	Text      string    `json:"text,omitempty"`
+	Caption   string    `json:"caption,omitempty"`
+	MediaURL  string    `json:"media_url,omitempty"`
+	MimeType  string    `json:"mime_type,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+type WebhookLog struct {
+	ID              uuid.UUID `json:"id" db:"id"`
+	WebhookID       uuid.UUID `json:"webhook_id" db:"webhook_id"`
+	EventType       string    `json:"event_type" db:"event_type"`
+	Payload         string    `json:"payload" db:"payload"`
+	HTTPStatus      *int      `json:"http_status,omitempty" db:"http_status"`
+	ResponseBody    *string   `json:"response_body,omitempty" db:"response_body"`
+	ErrorMessage    *string   `json:"error_message,omitempty" db:"error_message"`
+	ExecutionTimeMS *int      `json:"execution_time_ms,omitempty" db:"execution_time_ms"`
+	TriggeredAt     time.Time `json:"triggered_at" db:"triggered_at"`
+}
+
+// Message models
+type Message struct {
+	ID                uuid.UUID `json:"id" db:"id"`
+	SessionID         uuid.UUID `json:"session_id" db:"session_id"`
+	TenantID          string    `json:"tenant_id" db:"tenant_id"`
+	WhatsAppMessageID *string   `json:"whatsapp_message_id,omitempty" db:"whatsapp_message_id"`
+	Direction         string    `json:"direction" db:"direction"`
+	Sender            *string   `json:"sender,omitempty" db:"sender"`
+	Recipient         *string   `json:"recipient,omitempty" db:"recipient"`
+	MessageType       string    `json:"message_type" db:"message_type"`
+	Content           *string   `json:"content,omitempty" db:"content"`
+	MediaURL          *string   `json:"media_url,omitempty" db:"media_url"`
+	MimeType          *string   `json:"mime_type,omitempty" db:"mime_type"`
+	MediaBase64Stored *[]byte   `json:"media_base64_stored,omitempty" db:"media_base64"` // Bytes da mídia armazenados no banco (BYTEA)
+	MediaBase64       *string   `json:"media_base64,omitempty" db:"-"`
+	Status            string    `json:"status" db:"status"`
+	CreatedAt         time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at" db:"updated_at"`
+}
+
+type GetConversationRequest struct {
+	ContactNumber string `json:"contact_number,omitempty"`
+	Limit         int    `json:"limit,omitempty"`
+	Offset        int    `json:"offset,omitempty"`
+}
+
+type MessageResponse struct {
+	MessageID string    `json:"message_id"`
+	Status    string    `json:"status"`
+	SentAt    time.Time `json:"sent_at"`
+}

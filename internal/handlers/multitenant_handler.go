@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"boot-whatsapp-golang/internal/config"
+	"boot-whatsapp-golang/internal/middleware"
 	"boot-whatsapp-golang/internal/models"
+	"boot-whatsapp-golang/internal/repository"
 	"boot-whatsapp-golang/internal/services"
 	"boot-whatsapp-golang/pkg/logger"
 	"boot-whatsapp-golang/pkg/validator"
@@ -13,10 +15,13 @@ import (
 )
 
 type MultiTenantHandler struct {
-	whatsappService *services.MultiTenantWhatsAppService
-	config          *config.Config
-	logger          *logger.Logger
-	startTime       time.Time
+	whatsappService   *services.MultiTenantWhatsAppService
+	webhookService    *services.WebhookService
+	sessionRepository *repository.SessionRepository
+	messageService    *services.MessageService
+	config            *config.Config
+	logger            *logger.Logger
+	startTime         time.Time
 }
 
 func NewMultiTenantHandler(whatsappService *services.MultiTenantWhatsAppService, cfg *config.Config, log *logger.Logger) *MultiTenantHandler {
@@ -26,6 +31,18 @@ func NewMultiTenantHandler(whatsappService *services.MultiTenantWhatsAppService,
 		logger:          log,
 		startTime:       time.Now(),
 	}
+}
+
+func (h *MultiTenantHandler) SetWebhookService(ws *services.WebhookService) {
+	h.webhookService = ws
+}
+
+func (h *MultiTenantHandler) SetSessionRepository(sr *repository.SessionRepository) {
+	h.sessionRepository = sr
+}
+
+func (h *MultiTenantHandler) SetMessageService(ms *services.MessageService) {
+	h.messageService = ms
 }
 
 func (h *MultiTenantHandler) SendTextMessage(w http.ResponseWriter, r *http.Request) {
@@ -91,7 +108,8 @@ func (h *MultiTenantHandler) SendTextMessage(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := h.whatsappService.SendTextMessage(sessionKey, req.Number, req.Text); err != nil {
+	messageID, err := h.whatsappService.SendTextMessage(sessionKey, req.Number, req.Text)
+	if err != nil {
 		h.logger.Errorf("[%s] Falha ao enviar mensagem de texto para %s: %v", sessionKey, req.Number, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
@@ -106,13 +124,44 @@ func (h *MultiTenantHandler) SendTextMessage(w http.ResponseWriter, r *http.Requ
 	}
 
 	messageSent := models.MessageSent{
+		MessageID: messageID,
 		Recipient: req.Number,
 		Type:      "text",
 		SentAt:    time.Now(),
 	}
 
+	// Salvar mensagem no banco de dados
+	if h.messageService != nil && h.sessionRepository != nil {
+		sessionID, err := h.sessionRepository.GetIDBySessionKey(sessionKey)
+		if err == nil {
+			tenantID := middleware.GetTenantID(r)
+			_, errSave := h.messageService.SaveOutboundMessage(sessionID, tenantID, messageID, req.Number, req.Text, "text")
+			if errSave != nil {
+				h.logger.Warnf("[%s] Falha ao salvar mensagem no banco: %v", sessionKey, errSave)
+			}
+		}
+	}
+
+	// Disparar webhooks para notificar sobre a mensagem enviada
+	if h.webhookService != nil && h.sessionRepository != nil {
+		sessionID, err := h.sessionRepository.GetIDBySessionKey(sessionKey)
+		if err == nil {
+			tenantID := middleware.GetTenantID(r)
+			webhookData := &models.MessageWebhookData{
+				MessageID: messageID,
+				To:        req.Number,
+				Type:      "text",
+				Text:      req.Text,
+				Timestamp: messageSent.SentAt,
+			}
+			go h.webhookService.TriggerWebhooks(sessionID, tenantID, "message.sent", webhookData, sessionKey)
+		} else {
+			h.logger.Warnf("[%s] Falha ao obter sessionID para webhooks: %v", sessionKey, err)
+		}
+	}
+
 	w.WriteHeader(http.StatusOK)
-	err := json.NewEncoder(w).Encode(models.NewSuccessResponse(
+	err = json.NewEncoder(w).Encode(models.NewSuccessResponse(
 		"Mensagem enviada com sucesso",
 		messageSent,
 	))
@@ -212,7 +261,8 @@ func (h *MultiTenantHandler) SendMediaMessage(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := h.whatsappService.SendMediaMessage(sessionKey, req.Number, req.Caption, req.MediaURL, req.MediaBase64, req.MimeType); err != nil {
+	messageID, err := h.whatsappService.SendMediaMessage(sessionKey, req.Number, req.Caption, req.MediaURL, req.MediaBase64, req.MimeType)
+	if err != nil {
 		h.logger.Errorf("[%s] Falha ao enviar mensagem de mídia para %s: %v", sessionKey, req.Number, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
@@ -227,13 +277,50 @@ func (h *MultiTenantHandler) SendMediaMessage(w http.ResponseWriter, r *http.Req
 	}
 
 	messageSent := models.MessageSent{
+		MessageID: messageID,
 		Recipient: req.Number,
 		Type:      "media",
 		SentAt:    time.Now(),
 	}
 
+	// Salvar mensagem de mídia no banco de dados
+	if h.messageService != nil && h.sessionRepository != nil {
+		sessionID, err := h.sessionRepository.GetIDBySessionKey(sessionKey)
+		if err == nil {
+			tenantID := middleware.GetTenantID(r)
+			mediaURL := req.MediaURL
+			if mediaURL == "" {
+				mediaURL = "[base64-encoded]"
+			}
+			_, errSave := h.messageService.SaveMediaMessage(sessionID, tenantID, messageID, "outbound", req.Number, "media", mediaURL, nil, req.MimeType, req.Caption)
+			if errSave != nil {
+				h.logger.Warnf("[%s] Falha ao salvar mensagem de mídia no banco: %v", sessionKey, errSave)
+			}
+		}
+	}
+
+	// Disparar webhooks para notificar sobre a mensagem de mídia enviada
+	if h.webhookService != nil && h.sessionRepository != nil {
+		sessionID, err := h.sessionRepository.GetIDBySessionKey(sessionKey)
+		if err == nil {
+			tenantID := middleware.GetTenantID(r)
+			webhookData := &models.MessageWebhookData{
+				MessageID: messageID,
+				To:        req.Number,
+				Type:      "media",
+				Caption:   req.Caption,
+				MediaURL:  req.MediaURL,
+				MimeType:  req.MimeType,
+				Timestamp: messageSent.SentAt,
+			}
+			go h.webhookService.TriggerWebhooks(sessionID, tenantID, "message.sent", webhookData, sessionKey)
+		} else {
+			h.logger.Warnf("[%s] Falha ao obter sessionID para webhooks: %v", sessionKey, err)
+		}
+	}
+
 	w.WriteHeader(http.StatusOK)
-	err := json.NewEncoder(w).Encode(models.NewSuccessResponse(
+	err = json.NewEncoder(w).Encode(models.NewSuccessResponse(
 		"Mensagem de mídia enviada com sucesso",
 		messageSent,
 	))

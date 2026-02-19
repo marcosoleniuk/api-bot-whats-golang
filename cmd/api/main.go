@@ -4,6 +4,7 @@ import (
 	"boot-whatsapp-golang/internal/config"
 	"boot-whatsapp-golang/internal/handlers"
 	"boot-whatsapp-golang/internal/middleware"
+	"boot-whatsapp-golang/internal/repository"
 	"boot-whatsapp-golang/internal/services"
 	"boot-whatsapp-golang/pkg/logger"
 	"context"
@@ -66,10 +67,27 @@ func main() {
 	}
 	log.Info("Serviço WhatsApp Multi Sessões inicializado")
 
+	sessionRepo := repository.NewSessionRepository(db, log)
+	messageRepo := repository.NewMessageRepository(db)
+
 	messageHandler := handlers.NewMultiTenantHandler(whatsappService, cfg, log)
 	sessionHandler := handlers.NewSessionHandler(whatsappService, log)
 
-	router := setupRouter(messageHandler, sessionHandler, cfg, log)
+	webhookRepo := repository.NewWebhookRepository(db, log)
+	webhookService := services.NewWebhookService(webhookRepo, log)
+	webhookHandler := handlers.NewWebhookHandler(webhookService, sessionRepo, log)
+
+	messageService := services.NewMessageService(messageRepo)
+	conversationHandler := handlers.NewConversationHandler(messageService, sessionRepo, log)
+
+	messageHandler.SetWebhookService(webhookService)
+	messageHandler.SetSessionRepository(sessionRepo)
+	messageHandler.SetMessageService(messageService)
+
+	whatsappService.SetWebhookService(webhookService)
+	whatsappService.SetMessageService(messageService)
+
+	router := setupRouter(messageHandler, sessionHandler, webhookHandler, conversationHandler, cfg, log)
 
 	server := &http.Server{
 		Addr:         ":" + cfg.Server.Port,
@@ -91,6 +109,12 @@ func main() {
 		log.Info("  DELETE /api/v1/whatsapp/sessions/{sessionKey} - Deletar sessão")
 		log.Info("  POST /api/v1/messages/text - Enviar mensagem de texto")
 		log.Info("  POST /api/v1/messages/media - Enviar mensagem com mídia")
+		log.Info("  POST /api/v1/webhooks - Registrar novo webhook")
+		log.Info("  GET  /api/v1/webhooks - Listar webhooks")
+		log.Info("  GET  /api/v1/webhooks/{webhookId} - Obter webhook")
+		log.Info("  PUT  /api/v1/webhooks/{webhookId} - Atualizar webhook")
+		log.Info("  DELETE /api/v1/webhooks/{webhookId} - Deletar webhook")
+		log.Info("  GET  /api/v1/webhooks/{webhookId}/logs - Obter logs do webhook")
 
 		serverErrors <- server.ListenAndServe()
 	}()
@@ -124,7 +148,7 @@ func main() {
 	}
 }
 
-func setupRouter(mh *handlers.MultiTenantHandler, sh *handlers.SessionHandler, cfg *config.Config, log *logger.Logger) *mux.Router {
+func setupRouter(mh *handlers.MultiTenantHandler, sh *handlers.SessionHandler, wh *handlers.WebhookHandler, ch *handlers.ConversationHandler, cfg *config.Config, log *logger.Logger) *mux.Router {
 	r := mux.NewRouter()
 
 	r.HandleFunc("/health", mh.Health).Methods("GET")
@@ -139,6 +163,22 @@ func setupRouter(mh *handlers.MultiTenantHandler, sh *handlers.SessionHandler, c
 
 	api.HandleFunc("/messages/text", mh.SendTextMessage).Methods("POST")
 	api.HandleFunc("/messages/media", mh.SendMediaMessage).Methods("POST")
+
+	api.HandleFunc("/messages/history", ch.GetConversationWithAuth).Methods("GET")
+	api.HandleFunc("/messages/contacts", ch.GetContactsWithAuth).Methods("GET")
+	api.HandleFunc("/messages/stats", ch.GetStatsWithAuth).Methods("GET")
+	api.HandleFunc("/messages/{messageID}/media/{filename:.*}", ch.GetMessageMedia).Methods("GET")
+
+	api.HandleFunc("/conversations/{sessionID}", ch.GetConversation).Methods("GET")
+	api.HandleFunc("/conversations/{sessionID}/contacts", ch.GetContacts).Methods("GET")
+	api.HandleFunc("/conversations/{sessionID}/stats", ch.GetMessageStats).Methods("GET")
+
+	api.HandleFunc("/webhooks", wh.RegisterWebhook).Methods("POST")
+	api.HandleFunc("/webhooks", wh.ListWebhooks).Methods("GET")
+	api.HandleFunc("/webhooks/{webhookId}", wh.GetWebhook).Methods("GET")
+	api.HandleFunc("/webhooks/{webhookId}", wh.UpdateWebhook).Methods("PUT")
+	api.HandleFunc("/webhooks/{webhookId}", wh.DeleteWebhook).Methods("DELETE")
+	api.HandleFunc("/webhooks/{webhookId}/logs", wh.GetWebhookLogs).Methods("GET")
 
 	api.HandleFunc("/sendText", mh.SendTextMessage).Methods("POST")
 	api.HandleFunc("/sendMedia", mh.SendMediaMessage).Methods("POST")

@@ -2,14 +2,38 @@
   "info": {
     "name": "WhatsApp Bot API Multi Sessões MOleniuk",
     "_postman_id": "9c5ad56a-2b7b-4f8f-9f06-8b8f7a5d65d1",
-    "description": "Collection com todos os endpoints da API",
+    "description": "Collection com todos os endpoints da API incluindo persistência de mensagens e histórico",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "baseUrl", "value": "http://localhost:8080" },
-    { "key": "apiToken", "value": "seu-api-token" },
-    { "key": "tenantSessionKey", "value": "sua-session-key" },
-    { "key": "waSessionKey", "value": "cliente-001" }
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "apiToken",
+      "value": "seu-api-token"
+    },
+    {
+      "key": "tenantSessionKey",
+      "value": "sua-session-key"
+    },
+    {
+      "key": "waSessionKey",
+      "value": "cliente-001"
+    },
+    {
+      "key": "webhookId",
+      "value": "webhook-id-uuid"
+    },
+    {
+      "key": "webhookUrl",
+      "value": "https://seu-servidor.com/webhook"
+    },
+    {
+      "key": "sessionID",
+      "value": "uuid-da-sessao"
+    }
   ],
   "item": [
     {
@@ -20,149 +44,483 @@
       }
     },
     {
-      "name": "Registrar sessão",
-      "request": {
-        "method": "POST",
-        "header": [
-          { "key": "apitoken", "value": "{{apiToken}}" },
-          { "key": "SESSIONKEY", "value": "{{tenantSessionKey}}" },
-          { "key": "Content-Type", "value": "application/json" }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"whatsappSessionKey\": \"{{waSessionKey}}\",\n  \"nomePessoa\": \"João Silva\",\n  \"emailPessoa\": \"joao@empresa.com\"\n}"
+      "name": "Gerenciamento de Sessões",
+      "item": [
+        {
+          "name": "Registrar sessão",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "SESSIONKEY",
+                "value": "{{tenantSessionKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"whatsappSessionKey\": \"{{waSessionKey}}\", \"nomePessoa\": \"João Silva\", \"emailPessoa\": \"joao@empresa.com\"}"
+            },
+            "url": "{{baseUrl}}/api/v1/whatsapp/register"
+          }
         },
-        "url": "{{baseUrl}}/api/v1/whatsapp/register"
-      }
-    },
-    {
-      "name": "Obter QR code",
-      "request": {
-        "method": "GET",
-        "header": [
-          { "key": "apitoken", "value": "{{apiToken}}" },
-          { "key": "SESSIONKEY", "value": "{{tenantSessionKey}}" }
-        ],
-        "url": "{{baseUrl}}/api/v1/whatsapp/qrcode/{{waSessionKey}}"
-      }
-    },
-    {
-      "name": "Listar sessões",
-      "request": {
-        "method": "GET",
-        "header": [
-          { "key": "apitoken", "value": "{{apiToken}}" },
-          { "key": "SESSIONKEY", "value": "{{tenantSessionKey}}" }
-        ],
-        "url": "{{baseUrl}}/api/v1/whatsapp/sessions"
-      }
-    },
-    {
-      "name": "Desconectar sessão",
-      "request": {
-        "method": "POST",
-        "header": [
-          { "key": "apitoken", "value": "{{apiToken}}" },
-          { "key": "SESSIONKEY", "value": "{{tenantSessionKey}}" }
-        ],
-        "url": "{{baseUrl}}/api/v1/whatsapp/disconnect/{{waSessionKey}}"
-      }
-    },
-    {
-      "name": "Deletar sessão",
-      "request": {
-        "method": "DELETE",
-        "header": [
-          { "key": "apitoken", "value": "{{apiToken}}" },
-          { "key": "SESSIONKEY", "value": "{{tenantSessionKey}}" }
-        ],
-        "url": "{{baseUrl}}/api/v1/whatsapp/sessions/{{waSessionKey}}"
-      }
-    },
-    {
-      "name": "Enviar mensagem de texto",
-      "request": {
-        "method": "POST",
-        "header": [
-          { "key": "apitoken", "value": "{{apiToken}}" },
-          { "key": "SESSIONKEY", "value": "{{tenantSessionKey}}" },
-          { "key": "X-WhatsApp-Session-Key", "value": "{{waSessionKey}}" },
-          { "key": "Content-Type", "value": "application/json" }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"number\": \"5511999999999\",\n  \"text\": \"Olá!\"\n}"
+        {
+          "name": "Obter QR code",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "SESSIONKEY",
+                "value": "{{tenantSessionKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/whatsapp/qrcode/{{waSessionKey}}"
+          }
         },
-        "url": "{{baseUrl}}/api/v1/messages/text"
-      }
+        {
+          "name": "Listar sessões",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "SESSIONKEY",
+                "value": "{{tenantSessionKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/whatsapp/sessions"
+          }
+        },
+        {
+          "name": "Desconectar sessão",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "SESSIONKEY",
+                "value": "{{tenantSessionKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/whatsapp/disconnect/{{waSessionKey}}"
+          }
+        },
+        {
+          "name": "Deletar sessão",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "SESSIONKEY",
+                "value": "{{tenantSessionKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/whatsapp/sessions/{{waSessionKey}}"
+          }
+        }
+      ]
     },
     {
-      "name": "Enviar mídia (URL)",
-      "request": {
-        "method": "POST",
-        "header": [
-          { "key": "apitoken", "value": "{{apiToken}}" },
-          { "key": "SESSIONKEY", "value": "{{tenantSessionKey}}" },
-          { "key": "X-WhatsApp-Session-Key", "value": "{{waSessionKey}}" },
-          { "key": "Content-Type", "value": "application/json" }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"number\": \"5511999999999\",\n  \"caption\": \"Confira esta imagem\",\n  \"media_url\": \"https://picsum.photos/800/600\"\n}"
+      "name": "Mensagens",
+      "item": [
+        {
+          "name": "Enviar texto",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "SESSIONKEY",
+                "value": "{{tenantSessionKey}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"number\": \"5511999999999\", \"text\": \"Olá!\"}"
+            },
+            "url": "{{baseUrl}}/api/v1/messages/text",
+            "description": "Envia mensagem de texto e retorna messageID"
+          }
         },
-        "url": "{{baseUrl}}/api/v1/messages/media"
-      }
+        {
+          "name": "Enviar mídia (URL)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "SESSIONKEY",
+                "value": "{{tenantSessionKey}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"number\": \"5511999999999\", \"caption\": \"Confira esta imagem\", \"media_url\": \"https://picsum.photos/800/600\"}"
+            },
+            "url": "{{baseUrl}}/api/v1/messages/media",
+            "description": "Envia mídia via URL e retorna messageID"
+          }
+        },
+        {
+          "name": "Enviar mídia (Base64)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "SESSIONKEY",
+                "value": "{{tenantSessionKey}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"number\": \"5511999999999\", \"caption\": \"Documento\", \"media_base64\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==\", \"mime_type\": \"image/png\"}"
+            },
+            "url": "{{baseUrl}}/api/v1/messages/media",
+            "description": "Envia mídia em base64 e retorna messageID"
+          }
+        }
+      ]
     },
     {
-      "name": "Enviar mídia (Base64)",
-      "request": {
-        "method": "POST",
-        "header": [
-          { "key": "apitoken", "value": "{{apiToken}}" },
-          { "key": "SESSIONKEY", "value": "{{tenantSessionKey}}" },
-          { "key": "X-WhatsApp-Session-Key", "value": "{{waSessionKey}}" },
-          { "key": "Content-Type", "value": "application/json" }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"number\": \"5511999999999\",\n  \"caption\": \"Documento\",\n  \"media_base64\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==\",\n  \"mime_type\": \"image/png\"\n}"
+      "name": "Histórico de Mensagens (Autenticado)",
+      "description": "Endpoints que usam Bearer Token + X-WhatsApp-Session-Key. Use Authorization: Bearer {{apiToken}} e X-WhatsApp-Session-Key: {{waSessionKey}}",
+      "item": [
+        {
+          "name": "Obter histórico de mensagens",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{apiToken}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/messages/history?limit=50&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "messages", "history"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Número de mensagens (padrão: 50, máximo: 500)"
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "description": "Deslocamento para paginação"
+                },
+                {
+                  "key": "contact_number",
+                  "value": "5511999999999",
+                  "description": "Opcional: filtrar por número de contato",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Retorna histórico de mensagens da sessão autenticada com paginação"
+          }
         },
-        "url": "{{baseUrl}}/api/v1/messages/media"
-      }
+        {
+          "name": "Listar contatos",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{apiToken}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/messages/contacts",
+            "description": "Retorna lista de contatos únicos da sessão autenticada"
+          }
+        },
+        {
+          "name": "Obter estatísticas",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{apiToken}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/messages/stats",
+            "description": "Retorna estatísticas de mensagens (total, inbound, outbound, contatos)"
+          }
+        }
+      ]
     },
     {
-      "name": "Enviar texto (alias)",
-      "request": {
-        "method": "POST",
-        "header": [
-          { "key": "apitoken", "value": "{{apiToken}}" },
-          { "key": "SESSIONKEY", "value": "{{tenantSessionKey}}" },
-          { "key": "X-WhatsApp-Session-Key", "value": "{{waSessionKey}}" },
-          { "key": "Content-Type", "value": "application/json" }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"number\": \"5511999999999\",\n  \"text\": \"Olá!\"\n}"
+      "name": "Histórico de Mensagens (Admin)",
+      "description": "Endpoints administrativos que usar apitoken + SESSIONKEY. Use apitoken: {{apiToken}} e SESSIONKEY: {{tenantSessionKey}}",
+      "item": [
+        {
+          "name": "Obter histórico de específica sessão",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "SESSIONKEY",
+                "value": "{{tenantSessionKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/conversations/{{sessionID}}?limit=50&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "conversations", "{{sessionID}}"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                },
+                {
+                  "key": "contact_number",
+                  "value": "5511999999999",
+                  "description": "Opcional: filtrar por contato",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Admin: Retorna histórico de mensagens de uma sessionID específica"
+          }
         },
-        "url": "{{baseUrl}}/api/v1/sendText"
-      }
+        {
+          "name": "Listar contatos de específica sessão",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "SESSIONKEY",
+                "value": "{{tenantSessionKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/conversations/{{sessionID}}/contacts",
+            "description": "Admin: Retorna lista de contatos únicos de uma sessionID específica"
+          }
+        },
+        {
+          "name": "Obter estatísticas de específica sessão",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "SESSIONKEY",
+                "value": "{{tenantSessionKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/conversations/{{sessionID}}/stats",
+            "description": "Admin: Retorna estatísticas de mensagens de uma sessionID específica"
+          }
+        }
+      ]
     },
     {
-      "name": "Enviar mídia (alias)",
-      "request": {
-        "method": "POST",
-        "header": [
-          { "key": "apitoken", "value": "{{apiToken}}" },
-          { "key": "SESSIONKEY", "value": "{{tenantSessionKey}}" },
-          { "key": "X-WhatsApp-Session-Key", "value": "{{waSessionKey}}" },
-          { "key": "Content-Type", "value": "application/json" }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"number\": \"5511999999999\",\n  \"caption\": \"Confira esta imagem\",\n  \"media_url\": \"https://picsum.photos/800/600\"\n}"
+      "name": "Webhooks",
+      "item": [
+        {
+          "name": "Registrar webhook",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{apiToken}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"url\": \"{{webhookUrl}}\", \"events\": [\"message.sent\", \"message.received\", \"message.read\"], \"headers\": {\"Authorization\": \"Bearer seu-token-custom\"}}"
+            },
+            "url": "{{baseUrl}}/api/v1/webhooks",
+            "description": "Registra novo webhook com eventos: message.sent, message.received, message.read"
+          }
         },
-        "url": "{{baseUrl}}/api/v1/sendMedia"
-      }
+        {
+          "name": "Listar webhooks",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{apiToken}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/webhooks"
+          }
+        },
+        {
+          "name": "Obter webhook específico",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{apiToken}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/webhooks/{{webhookId}}"
+          }
+        },
+        {
+          "name": "Atualizar webhook",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{apiToken}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"url\": \"https://novo-servidor.com/webhook\", \"events\": [\"message.sent\", \"message.received\", \"message.read\"], \"headers\": {\"Authorization\": \"Bearer novo-token\"}}"
+            },
+            "url": "{{baseUrl}}/api/v1/webhooks/{{webhookId}}"
+          }
+        },
+        {
+          "name": "Deletar webhook",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{apiToken}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/webhooks/{{webhookId}}"
+          }
+        },
+        {
+          "name": "Obter logs do webhook",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{apiToken}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/webhooks/{{webhookId}}/logs?limit=50"
+          }
+        }
+      ]
     }
   ]
 }

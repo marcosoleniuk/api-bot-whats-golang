@@ -128,10 +128,12 @@ func (cs *clientStore) Range(fn func(key string, v *WhatsAppClient)) {
 type MultiTenantWhatsAppService struct {
 	clients *clientStore
 
-	config     *config.Config
-	logger     *logger.Logger
-	repository *repository.SessionRepository
-	container  *sqlstore.Container
+	config         *config.Config
+	logger         *logger.Logger
+	repository     *repository.SessionRepository
+	container      *sqlstore.Container
+	webhookService *WebhookService
+	messageService *MessageService
 
 	httpClient *http.Client
 }
@@ -178,6 +180,14 @@ func NewMultiTenantWhatsAppService(cfg *config.Config, db *sql.DB, log *logger.L
 	}
 
 	return service, nil
+}
+
+func (s *MultiTenantWhatsAppService) SetWebhookService(ws *WebhookService) {
+	s.webhookService = ws
+}
+
+func (s *MultiTenantWhatsAppService) SetMessageService(ms *MessageService) {
+	s.messageService = ms
 }
 
 func (s *MultiTenantWhatsAppService) LoadExistingSessions() error {
@@ -383,7 +393,7 @@ func (s *MultiTenantWhatsAppService) monitorQRCode(session *models.WhatsAppSessi
 
 func (s *MultiTenantWhatsAppService) registerEventHandlers(client *whatsmeow.Client, session *models.WhatsAppSession) {
 	client.AddEventHandler(func(evt interface{}) {
-		switch evt.(type) {
+		switch event := evt.(type) {
 		case *events.Connected:
 			phoneNumber := ""
 			deviceJID := ""
@@ -401,8 +411,170 @@ func (s *MultiTenantWhatsAppService) registerEventHandlers(client *whatsmeow.Cli
 				_ = client.Store.Delete(context.Background())
 			}
 			_ = s.repository.MarkLoggedOut(session.ID)
+
+		case *events.Receipt:
+			s.logger.Infof("[%s] Receipt event recebido: Type=%s, %+v", session.WhatsAppSessionKey, event.Type, event)
+			// Disparar webhook apenas para read receipts (quando a mensagem é realmente lida)
+			if event.Type == "read" && s.webhookService != nil {
+				webhookData := &models.MessageWebhookData{
+					Type:      "receipt",
+					Text:      "Message read receipt",
+					Timestamp: time.Now(),
+				}
+				// Usar sessionKey como tenantID para manter consistência com message.sent
+				go s.webhookService.TriggerWebhooks(session.ID, session.WhatsAppSessionKey, "message.read", webhookData, session.WhatsAppSessionKey)
+			}
+			// Atualizar status de mensagens no banco baseado em recibos
+			if s.messageService != nil && len(event.MessageIDs) > 0 {
+				for _, msgID := range event.MessageIDs {
+					status := "sent"
+					if event.Type == "read" {
+						status = "read"
+					} else if event.Type == "" {
+						status = "delivered"
+					}
+					_ = s.messageService.UpdateMessageStatus(msgID, status)
+				}
+			}
+
+		case *events.Message:
+			// Extrair conteúdo e tipo da mensagem
+			var messageType string
+			var messageContent string
+			var mediaURL string
+			var mimeType string
+			var mediaBytes []byte
+
+			if msg := event.Message; msg != nil {
+				if msg.GetConversation() != "" {
+					messageType = "text"
+					messageContent = msg.GetConversation()
+				} else if extMsg := msg.GetExtendedTextMessage(); extMsg != nil {
+					messageType = "text"
+					messageContent = extMsg.GetText()
+				} else if imgMsg := msg.GetImageMessage(); imgMsg != nil {
+					messageType = "image"
+					messageContent = imgMsg.GetCaption()
+					if imgMsg.GetURL() != "" {
+						mediaURL = imgMsg.GetURL()
+					}
+					if imgMsg.GetMimetype() != "" {
+						mimeType = imgMsg.GetMimetype()
+					}
+				} else if docMsg := msg.GetDocumentMessage(); docMsg != nil {
+					messageType = "document"
+					messageContent = docMsg.GetCaption()
+					if docMsg.GetURL() != "" {
+						mediaURL = docMsg.GetURL()
+					}
+					if docMsg.GetMimetype() != "" {
+						mimeType = docMsg.GetMimetype()
+					}
+				} else if vidMsg := msg.GetVideoMessage(); vidMsg != nil {
+					messageType = "video"
+					messageContent = vidMsg.GetCaption()
+					if vidMsg.GetURL() != "" {
+						mediaURL = vidMsg.GetURL()
+					}
+					if vidMsg.GetMimetype() != "" {
+						mimeType = vidMsg.GetMimetype()
+					}
+				} else if audMsg := msg.GetAudioMessage(); audMsg != nil {
+					messageType = "audio"
+					if audMsg.GetURL() != "" {
+						mediaURL = audMsg.GetURL()
+					}
+					if audMsg.GetMimetype() != "" {
+						mimeType = audMsg.GetMimetype()
+					}
+				}
+			}
+
+			// Ignorar mensagens vazias/sem conteúdo (receipts disfarçados)
+			if messageType == "" {
+				return
+			}
+
+			s.logger.Infof("[%s] Message event recebido de %s (type=%s)", session.WhatsAppSessionKey, event.Info.Sender, messageType)
+
+			// Salvar mensagem recebida no banco de dados
+			if s.messageService != nil {
+				messageID := event.Info.ID
+				sender := event.Info.Sender.String()
+
+				var err error
+				// Usar SaveMediaMessage se houver mídia, caso contrário SaveInboundMessage
+				if mediaURL != "" {
+					if downloaded, dlErr := s.downloadInboundMedia(client, event.Message); dlErr != nil {
+						s.logger.Warnf("[%s] Falha ao baixar/decriptar mídia %s: %v", session.WhatsAppSessionKey, messageID, dlErr)
+					} else {
+						mediaBytes = downloaded
+						s.logger.Infof("[%s] Mídia decriptada armazenável para %s (size=%d bytes)", session.WhatsAppSessionKey, messageID, len(mediaBytes))
+					}
+
+					fmt.Printf("[%s] Salvando mídia imediatamente - URL: %s\n", session.WhatsAppSessionKey, mediaURL)
+					_, err = s.messageService.SaveMediaMessage(
+						session.ID,
+						session.WhatsAppSessionKey,
+						messageID,
+						"inbound",
+						sender,
+						messageType,
+						mediaURL,
+						mediaBytes,
+						mimeType,
+						messageContent,
+					)
+				} else {
+					_, err = s.messageService.SaveInboundMessage(
+						session.ID,
+						session.WhatsAppSessionKey,
+						messageID,
+						sender,
+						messageContent,
+						messageType,
+					)
+				}
+				if err != nil {
+					s.logger.Warnf("[%s] Falha ao salvar mensagem recebida: %v", session.WhatsAppSessionKey, err)
+				}
+
+				// Disparar webhook para mensagens recebidas
+				if s.webhookService != nil {
+					webhookData := &models.MessageWebhookData{
+						MessageID: messageID,
+						From:      sender,
+						Type:      messageType,
+						Text:      messageContent,
+						Timestamp: time.Now(),
+					}
+					go s.webhookService.TriggerWebhooks(session.ID, session.WhatsAppSessionKey, "message.received", webhookData, session.WhatsAppSessionKey)
+				}
+			}
+
+		default:
+			s.logger.Infof("[%s] Evento desconhecido recebido: %T", session.WhatsAppSessionKey, evt)
 		}
 	})
+}
+
+func (s *MultiTenantWhatsAppService) downloadInboundMedia(client *whatsmeow.Client, msg *waE2E.Message) ([]byte, error) {
+	if client == nil || msg == nil {
+		return nil, fmt.Errorf("cliente ou mensagem inválida")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	data, err := client.DownloadAny(ctx, msg)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("mídia vazia")
+	}
+
+	return data, nil
 }
 
 func (s *MultiTenantWhatsAppService) reconnectSession(session *models.WhatsAppSession) error {
@@ -556,45 +728,51 @@ func (s *MultiTenantWhatsAppService) GetClient(sessionKey string) (*whatsmeow.Cl
 	return waClient.Client, nil
 }
 
-func (s *MultiTenantWhatsAppService) SendTextMessage(sessionKey, number, text string) error {
+func (s *MultiTenantWhatsAppService) SendTextMessage(sessionKey, number, text string) (string, error) {
 	client, err := s.GetClient(sessionKey)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	jid, err := s.parsePhoneNumber(number)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_, err = client.SendMessage(ctx, jid, &waE2E.Message{
+	resp, err := client.SendMessage(ctx, jid, &waE2E.Message{
 		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
 			Text: proto.String(text),
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("falha ao enviar mensagem: %w", err)
+		return "", fmt.Errorf("falha ao enviar mensagem: %w", err)
 	}
-	return nil
+
+	messageID := resp.ID
+	if messageID == "" {
+		messageID = "unknown"
+	}
+
+	return messageID, nil
 }
 
-func (s *MultiTenantWhatsAppService) SendMediaMessage(sessionKey, number, caption, mediaURL, mediaBase64, mimeType string) error {
+func (s *MultiTenantWhatsAppService) SendMediaMessage(sessionKey, number, caption, mediaURL, mediaBase64, mimeType string) (string, error) {
 	client, err := s.GetClient(sessionKey)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	jid, err := s.parsePhoneNumber(number)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	mediaData, contentType, filename, err := s.prepareMedia(mediaURL, mediaBase64, mimeType)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	mediaType := s.determineMediaType(contentType)
@@ -604,16 +782,22 @@ func (s *MultiTenantWhatsAppService) SendMediaMessage(sessionKey, number, captio
 
 	uploaded, err := client.Upload(ctx, mediaData, mediaType)
 	if err != nil {
-		return fmt.Errorf("falha ao fazer upload da mídia: %w", err)
+		return "", fmt.Errorf("falha ao fazer upload da mídia: %w", err)
 	}
 
 	msg := s.buildMediaMessage(uploaded, mediaData, contentType, caption, filename)
 
-	_, err = client.SendMessage(ctx, jid, msg)
+	resp, err := client.SendMessage(ctx, jid, msg)
 	if err != nil {
-		return fmt.Errorf("falha ao enviar mensagem de mídia: %w", err)
+		return "", fmt.Errorf("falha ao enviar mensagem de mídia: %w", err)
 	}
-	return nil
+
+	messageID := resp.ID
+	if messageID == "" {
+		messageID = "unknown"
+	}
+
+	return messageID, nil
 }
 
 func (s *MultiTenantWhatsAppService) ListSessions() ([]*models.WhatsAppSession, error) {
