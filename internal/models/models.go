@@ -145,7 +145,6 @@ func NewErrorResponse(message, code string, details map[string]string) *ErrorRes
 	}
 }
 
-// Webhook models
 type Webhook struct {
 	ID              uuid.UUID         `json:"id" db:"id"`
 	SessionID       uuid.UUID         `json:"session_id" db:"session_id"`
@@ -197,7 +196,6 @@ type WebhookLog struct {
 	TriggeredAt     time.Time `json:"triggered_at" db:"triggered_at"`
 }
 
-// Message models
 type Message struct {
 	ID                uuid.UUID `json:"id" db:"id"`
 	SessionID         uuid.UUID `json:"session_id" db:"session_id"`
@@ -210,7 +208,7 @@ type Message struct {
 	Content           *string   `json:"content,omitempty" db:"content"`
 	MediaURL          *string   `json:"media_url,omitempty" db:"media_url"`
 	MimeType          *string   `json:"mime_type,omitempty" db:"mime_type"`
-	MediaBase64Stored *[]byte   `json:"media_base64_stored,omitempty" db:"media_base64"` // Bytes da mídia armazenados no banco (BYTEA)
+	MediaBase64Stored *[]byte   `json:"media_base64_stored,omitempty" db:"media_base64"`
 	MediaBase64       *string   `json:"media_base64,omitempty" db:"-"`
 	Status            string    `json:"status" db:"status"`
 	CreatedAt         time.Time `json:"created_at" db:"created_at"`

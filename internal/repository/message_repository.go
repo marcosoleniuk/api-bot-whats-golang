@@ -98,7 +98,7 @@ func (r *MessageRepository) GetMessageByID(id uuid.UUID) (*models.Message, error
 	)
 
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(sql.ErrNoRows, err) {
 			return nil, errors.New("mensagem não encontrada")
 		}
 		return nil, fmt.Errorf("erro ao buscar mensagem: %w", err)
