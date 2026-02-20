@@ -109,6 +109,10 @@ func main() {
 		log.Info("  DELETE /api/v1/whatsapp/sessions/{sessionKey} - Deletar sessão")
 		log.Info("  POST /api/v1/messages/text - Enviar mensagem de texto")
 		log.Info("  POST /api/v1/messages/media - Enviar mensagem com mídia")
+		log.Info("  POST /api/v1/messages/audio - Enviar áudio")
+		log.Info("  POST /api/v1/messages/video - Enviar vídeo")
+		log.Info("  POST /api/v1/messages/poll - Enviar enquete")
+		log.Info("  POST /api/v1/messages/event - Enviar evento")
 		log.Info("  POST /api/v1/webhooks - Registrar novo webhook")
 		log.Info("  GET  /api/v1/webhooks - Listar webhooks")
 		log.Info("  GET  /api/v1/webhooks/{webhookId} - Obter webhook")
@@ -163,6 +167,10 @@ func setupRouter(mh *handlers.MultiTenantHandler, sh *handlers.SessionHandler, w
 
 	api.HandleFunc("/messages/text", mh.SendTextMessage).Methods("POST")
 	api.HandleFunc("/messages/media", mh.SendMediaMessage).Methods("POST")
+	api.HandleFunc("/messages/audio", mh.SendAudioMessage).Methods("POST")
+	api.HandleFunc("/messages/video", mh.SendVideoMessage).Methods("POST")
+	api.HandleFunc("/messages/poll", mh.SendPollMessage).Methods("POST")
+	api.HandleFunc("/messages/event", mh.SendEventMessage).Methods("POST")
 
 	api.HandleFunc("/messages/history", ch.GetConversationWithAuth).Methods("GET")
 	api.HandleFunc("/messages/contacts", ch.GetContactsWithAuth).Methods("GET")
@@ -182,6 +190,10 @@ func setupRouter(mh *handlers.MultiTenantHandler, sh *handlers.SessionHandler, w
 
 	api.HandleFunc("/sendText", mh.SendTextMessage).Methods("POST")
 	api.HandleFunc("/sendMedia", mh.SendMediaMessage).Methods("POST")
+	api.HandleFunc("/sendAudio", mh.SendAudioMessage).Methods("POST")
+	api.HandleFunc("/sendVideo", mh.SendVideoMessage).Methods("POST")
+	api.HandleFunc("/sendPoll", mh.SendPollMessage).Methods("POST")
+	api.HandleFunc("/sendEvent", mh.SendEventMessage).Methods("POST")
 
 	r.Use(middleware.RecoveryMiddleware(log))
 	r.Use(middleware.LoggingMiddleware(log))

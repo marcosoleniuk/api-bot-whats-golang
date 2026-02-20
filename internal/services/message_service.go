@@ -156,8 +156,7 @@ func (s *MessageService) GetConversation(sessionID uuid.UUID, contactNumber stri
 				}
 
 				encoded := base64.StdEncoding.EncodeToString(*msg.MediaBase64Stored)
-				dataURI := fmt.Sprintf("data:%s;base64,%s", mimeType, encoded)
-				msg.MediaBase64 = &dataURI
+				msg.MediaBase64 = new(fmt.Sprintf("data:%s;base64,%s", mimeType, encoded))
 			} else if msg.MediaURL != nil && *msg.MediaURL != "" {
 				fmt.Printf("[DEBUG] Tentando fazer download on-demand de %s\n", msg.ID)
 

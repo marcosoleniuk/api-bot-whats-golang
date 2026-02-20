@@ -233,6 +233,156 @@
             "url": "{{baseUrl}}/api/v1/messages/media",
             "description": "Envia mídia em base64 e retorna messageID"
           }
+        },
+        {
+          "name": "Enviar áudio (URL)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "SESSIONKEY",
+                "value": "{{tenantSessionKey}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"number\":\"5511999999999\",\"media_url\":\"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3\",\"mime_type\":\"audio/mpeg\",\"ptt\":false}"
+            },
+            "url": "{{baseUrl}}/api/v1/messages/audio",
+            "description": "Envia áudio e retorna messageID"
+          }
+        },
+        {
+          "name": "Enviar vídeo (URL)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "SESSIONKEY",
+                "value": "{{tenantSessionKey}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"number\":\"5511999999999\",\"caption\":\"Vídeo de teste\",\"media_url\":\"https://samplelib.com/lib/preview/mp4/sample-5s.mp4\",\"mime_type\":\"video/mp4\",\"gif_playback\":false}"
+            },
+            "url": "{{baseUrl}}/api/v1/messages/video",
+            "description": "Envia vídeo e retorna messageID"
+          }
+        },
+        {
+          "name": "Enviar enquete",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "SESSIONKEY",
+                "value": "{{tenantSessionKey}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"number\":\"5511999999999\",\"question\":\"Qual opção você prefere?\",\"options\":[\"Opção A\",\"Opção B\",\"Opção C\"],\"selectable_options_count\":1}"
+            },
+            "url": "{{baseUrl}}/api/v1/messages/poll",
+            "description": "Envia enquete e retorna messageID"
+          }
+        },
+        {
+          "name": "Enviar evento (nativo vídeo)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "SESSIONKEY",
+                "value": "{{tenantSessionKey}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"number\":\"5511999999999\",\"name\":\"Reunião semanal\",\"description\":\"Alinhamento de sprint\",\"join_link\":\"https://call.whatsapp.com/video/SEU_TOKEN_REAL_AQUI\",\"start_time\":\"2026-04-01T09:00:00\",\"end_time\":\"2026-04-01T10:00:00\",\"call_type\":\"video\",\"force_structured\":true,\"extra_guests_allowed\":true,\"is_schedule_call\":true,\"has_reminder\":true,\"reminder_offset_sec\":900}"
+            },
+            "url": "{{baseUrl}}/api/v1/messages/event",
+            "description": "Envia evento nativo de vídeo e retorna messageID. Use join_link oficial call.whatsapp.com/video/... (não use links externos como meet.google.com)."
+          }
+        },
+        {
+          "name": "Enviar evento (nativo voz)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "SESSIONKEY",
+                "value": "{{tenantSessionKey}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"number\":\"5511999999999\",\"name\":\"Reunião de voz\",\"description\":\"Alinhamento por chamada de voz\",\"join_link\":\"https://call.whatsapp.com/voice/SEU_TOKEN_REAL_AQUI\",\"start_time\":\"2026-04-01T09:00:00\",\"end_time\":\"2026-04-01T10:00:00\",\"call_type\":\"voice\",\"force_structured\":true,\"extra_guests_allowed\":true,\"is_schedule_call\":true,\"has_reminder\":true,\"reminder_offset_sec\":900}"
+            },
+            "url": "{{baseUrl}}/api/v1/messages/event",
+            "description": "Envia evento nativo de voz e retorna messageID. Use join_link oficial call.whatsapp.com/voice/..."
+          }
         }
       ]
     },
@@ -256,8 +406,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/messages/history?limit=50&offset=0",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "messages", "history"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "messages",
+                "history"
+              ],
               "query": [
                 {
                   "key": "limit",
@@ -338,8 +495,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/conversations/{{sessionID}}?limit=50&offset=0",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "conversations", "{{sessionID}}"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "conversations",
+                "{{sessionID}}"
+              ],
               "query": [
                 {
                   "key": "limit",
@@ -524,3 +688,4 @@
     }
   ]
 }
+

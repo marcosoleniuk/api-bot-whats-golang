@@ -183,16 +183,14 @@ func (s *WebhookService) execWebhook(webhook *models.Webhook, eventType string, 
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		s.logger.Infof("Webhook disparado com sucesso [%s]: %s (Status: %d)", eventType, webhook.URL, resp.StatusCode)
-		status := resp.StatusCode
-		s.logWebhookExecution(webhook, eventType, payloadJSON, &status, string(respBody), startTime)
+		s.logWebhookExecution(webhook, eventType, payloadJSON, new(resp.StatusCode), string(respBody), startTime)
 		err := s.repository.UpdateLastTriggered(webhook.ID)
 		if err != nil {
 			s.logger.Errorf("Falha ao atualizar last_triggered do webhook %s: %v", webhook.ID, err)
 		}
 	} else {
 		s.logger.Warnf("Webhook retornou status %d [%s]: %s", resp.StatusCode, eventType, webhook.URL)
-		status := resp.StatusCode
-		s.logWebhookExecution(webhook, eventType, payloadJSON, &status, string(respBody), startTime)
+		s.logWebhookExecution(webhook, eventType, payloadJSON, new(resp.StatusCode), string(respBody), startTime)
 	}
 }
 

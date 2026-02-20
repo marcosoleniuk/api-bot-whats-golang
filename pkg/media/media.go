@@ -14,14 +14,6 @@ type DataDrive struct {
 	MimeType string
 }
 
-func URLToBase64(url string) (*string, error) {
-	mediaData, err := URLToMediaData(url)
-	if err != nil {
-		return nil, err
-	}
-	return &mediaData.Base64, nil
-}
-
 func URLToMediaData(url string) (*DataDrive, error) {
 	client := &http.Client{
 		Timeout: 15 * time.Second,

@@ -56,6 +56,45 @@ type MediaRequest struct {
 	MimeType    string `json:"mime_type"`
 }
 
+type AudioRequest struct {
+	Number      string `json:"number" validate:"required"`
+	MediaURL    string `json:"media_url" validate:"required_without=MediaBase64"`
+	MediaBase64 string `json:"media_base64" validate:"required_without=MediaURL"`
+	MimeType    string `json:"mime_type"`
+	PTT         bool   `json:"ptt"`
+}
+
+type VideoRequest struct {
+	Number      string `json:"number" validate:"required"`
+	Caption     string `json:"caption"`
+	MediaURL    string `json:"media_url" validate:"required_without=MediaBase64"`
+	MediaBase64 string `json:"media_base64" validate:"required_without=MediaURL"`
+	MimeType    string `json:"mime_type"`
+	GIFPlayback bool   `json:"gif_playback"`
+}
+
+type PollRequest struct {
+	Number                 string   `json:"number" validate:"required"`
+	Question               string   `json:"question" validate:"required"`
+	Options                []string `json:"options" validate:"required"`
+	SelectableOptionsCount int      `json:"selectable_options_count"`
+}
+
+type EventRequest struct {
+	Number             string `json:"number" validate:"required"`
+	Name               string `json:"name" validate:"required"`
+	Description        string `json:"description"`
+	JoinLink           string `json:"join_link"`
+	StartTime          string `json:"start_time" validate:"required"`
+	EndTime            string `json:"end_time"`
+	CallType           string `json:"call_type"` // voice|video
+	ForceStructured    *bool  `json:"force_structured,omitempty"`
+	ExtraGuestsAllowed bool   `json:"extra_guests_allowed"`
+	IsScheduleCall     bool   `json:"is_schedule_call"`
+	HasReminder        bool   `json:"has_reminder"`
+	ReminderOffsetSec  int64  `json:"reminder_offset_sec"`
+}
+
 type APIResponse struct {
 	Status    string      `json:"status"`
 	Message   string      `json:"message"`

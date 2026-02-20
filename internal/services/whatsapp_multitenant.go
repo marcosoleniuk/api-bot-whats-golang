@@ -20,6 +20,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/skip2/go-qrcode"
+	"go.mau.fi/util/random"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store"
@@ -136,6 +137,15 @@ type MultiTenantWhatsAppService struct {
 	messageService *MessageService
 
 	httpClient *http.Client
+
+	pendingEventFallbackMu sync.Mutex
+	pendingEventFallback   map[string]pendingEventFallback
+}
+
+type pendingEventFallback struct {
+	chat      types.JID
+	text      string
+	expiresAt time.Time
 }
 
 func NewMultiTenantWhatsAppService(cfg *config.Config, db *sql.DB, log *logger.Logger) (*MultiTenantWhatsAppService, error) {
@@ -167,12 +177,13 @@ func NewMultiTenantWhatsAppService(cfg *config.Config, db *sql.DB, log *logger.L
 	}
 
 	service := &MultiTenantWhatsAppService{
-		clients:    newClientStore(),
-		config:     cfg,
-		logger:     log,
-		repository: repo,
-		container:  container,
-		httpClient: httpClient,
+		clients:              newClientStore(),
+		config:               cfg,
+		logger:               log,
+		repository:           repo,
+		container:            container,
+		httpClient:           httpClient,
+		pendingEventFallback: make(map[string]pendingEventFallback),
 	}
 
 	if err := service.LoadExistingSessions(); err != nil {
@@ -434,6 +445,16 @@ func (s *MultiTenantWhatsAppService) registerEventHandlers(client *whatsmeow.Cli
 						status = "delivered"
 					}
 					_ = s.messageService.UpdateMessageStatus(msgID, status)
+				}
+			}
+
+			if event.Type == "retry" && len(event.MessageIDs) > 0 {
+				for _, msgID := range event.MessageIDs {
+					s.logger.Warnf(
+						"[%s] Retry recebido para mensagem %s (destino não confirmou decodificação do payload nativo em chat direto)",
+						session.WhatsAppSessionKey,
+						msgID,
+					)
 				}
 			}
 
@@ -759,7 +780,157 @@ func (s *MultiTenantWhatsAppService) SendTextMessage(sessionKey, number, text st
 	return messageID, nil
 }
 
-func (s *MultiTenantWhatsAppService) SendMediaMessage(sessionKey, number, caption, mediaURL, mediaBase64, mimeType string) (string, error) {
+func (s *MultiTenantWhatsAppService) SendMediaMessage(sessionKey, number, caption, mediaURL, mediaBase64, mimeType string) (string, string, string, []byte, error) {
+	client, err := s.GetClient(sessionKey)
+	if err != nil {
+		return "", "", "", nil, err
+	}
+
+	jid, err := s.parsePhoneNumber(number)
+	if err != nil {
+		return "", "", "", nil, err
+	}
+
+	mediaData, contentType, filename, err := s.prepareMedia(mediaURL, mediaBase64, mimeType)
+	if err != nil {
+		return "", "", "", nil, err
+	}
+
+	mediaType := s.determineMediaType(contentType)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	uploaded, err := client.Upload(ctx, mediaData, mediaType)
+	if err != nil {
+		return "", "", "", nil, fmt.Errorf("falha ao fazer upload da mídia: %w", err)
+	}
+
+	msg := s.buildMediaMessage(uploaded, mediaData, contentType, caption, filename)
+
+	resp, err := client.SendMessage(ctx, jid, msg)
+	if err != nil {
+		return "", "", "", nil, fmt.Errorf("falha ao enviar mensagem de mídia: %w", err)
+	}
+
+	messageID := resp.ID
+	if messageID == "" {
+		messageID = "unknown"
+	}
+
+	return messageID, contentType, mediaTypeToMessageType(mediaType), mediaData, nil
+}
+
+func (s *MultiTenantWhatsAppService) SendAudioMessage(sessionKey, number, mediaURL, mediaBase64, mimeType string, ptt bool) (string, string, []byte, error) {
+	client, err := s.GetClient(sessionKey)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	jid, err := s.parsePhoneNumber(number)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	mediaData, contentType, _, err := s.prepareMedia(mediaURL, mediaBase64, mimeType)
+	if err != nil {
+		return "", "", nil, err
+	}
+	contentType = normalizeExpectedContentType(contentType, mimeType, "audio/")
+	if contentType == "" {
+		contentType = "audio/mpeg"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	uploaded, err := client.Upload(ctx, mediaData, whatsmeow.MediaAudio)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("falha ao fazer upload do áudio: %w", err)
+	}
+
+	msg := &waE2E.Message{
+		AudioMessage: &waE2E.AudioMessage{
+			URL:           proto.String(uploaded.URL),
+			DirectPath:    proto.String(uploaded.DirectPath),
+			MediaKey:      uploaded.MediaKey,
+			Mimetype:      proto.String(contentType),
+			FileEncSHA256: uploaded.FileEncSHA256,
+			FileSHA256:    uploaded.FileSHA256,
+			FileLength:    proto.Uint64(uint64(len(mediaData))),
+			PTT:           proto.Bool(ptt),
+		},
+	}
+
+	resp, err := client.SendMessage(ctx, jid, msg)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("falha ao enviar áudio: %w", err)
+	}
+
+	messageID := resp.ID
+	if messageID == "" {
+		messageID = "unknown"
+	}
+
+	return messageID, contentType, mediaData, nil
+}
+
+func (s *MultiTenantWhatsAppService) SendVideoMessage(sessionKey, number, caption, mediaURL, mediaBase64, mimeType string, gifPlayback bool) (string, string, []byte, error) {
+	client, err := s.GetClient(sessionKey)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	jid, err := s.parsePhoneNumber(number)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	mediaData, contentType, _, err := s.prepareMedia(mediaURL, mediaBase64, mimeType)
+	if err != nil {
+		return "", "", nil, err
+	}
+	contentType = normalizeExpectedContentType(contentType, mimeType, "video/")
+	if contentType == "" {
+		contentType = "video/mp4"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	uploaded, err := client.Upload(ctx, mediaData, whatsmeow.MediaVideo)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("falha ao fazer upload do vídeo: %w", err)
+	}
+
+	msg := &waE2E.Message{
+		VideoMessage: &waE2E.VideoMessage{
+			URL:           proto.String(uploaded.URL),
+			DirectPath:    proto.String(uploaded.DirectPath),
+			MediaKey:      uploaded.MediaKey,
+			Mimetype:      proto.String(contentType),
+			FileEncSHA256: uploaded.FileEncSHA256,
+			FileSHA256:    uploaded.FileSHA256,
+			FileLength:    proto.Uint64(uint64(len(mediaData))),
+			Caption:       proto.String(caption),
+			GifPlayback:   proto.Bool(gifPlayback),
+		},
+	}
+
+	resp, err := client.SendMessage(ctx, jid, msg)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("falha ao enviar vídeo: %w", err)
+	}
+
+	messageID := resp.ID
+	if messageID == "" {
+		messageID = "unknown"
+	}
+
+	return messageID, contentType, mediaData, nil
+}
+
+func (s *MultiTenantWhatsAppService) SendPollMessage(sessionKey, number, question string, options []string, selectableOptionsCount int) (string, error) {
 	client, err := s.GetClient(sessionKey)
 	if err != nil {
 		return "", err
@@ -770,26 +941,14 @@ func (s *MultiTenantWhatsAppService) SendMediaMessage(sessionKey, number, captio
 		return "", err
 	}
 
-	mediaData, contentType, filename, err := s.prepareMedia(mediaURL, mediaBase64, mimeType)
-	if err != nil {
-		return "", err
-	}
+	msg := client.BuildPollCreation(question, options, selectableOptionsCount)
 
-	mediaType := s.determineMediaType(contentType)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-
-	uploaded, err := client.Upload(ctx, mediaData, mediaType)
-	if err != nil {
-		return "", fmt.Errorf("falha ao fazer upload da mídia: %w", err)
-	}
-
-	msg := s.buildMediaMessage(uploaded, mediaData, contentType, caption, filename)
 
 	resp, err := client.SendMessage(ctx, jid, msg)
 	if err != nil {
-		return "", fmt.Errorf("falha ao enviar mensagem de mídia: %w", err)
+		return "", fmt.Errorf("falha ao enviar enquete: %w", err)
 	}
 
 	messageID := resp.ID
@@ -798,6 +957,257 @@ func (s *MultiTenantWhatsAppService) SendMediaMessage(sessionKey, number, captio
 	}
 
 	return messageID, nil
+}
+
+func (s *MultiTenantWhatsAppService) SendEventMessage(
+	sessionKey, number, name, description, joinLink string,
+	startTime, endTime int64,
+	extraGuestsAllowed, isScheduleCall, hasReminder bool,
+	reminderOffsetSec int64,
+	callType string,
+	forceStructured bool,
+) (string, error) {
+	client, err := s.GetClient(sessionKey)
+	if err != nil {
+		return "", err
+	}
+
+	jid, err := s.parsePhoneNumber(number)
+	if err != nil {
+		return "", err
+	}
+
+	isDirectChat := jid.Server == types.DefaultUserServer
+	sendMessageWithTimeout := func(timeout time.Duration, msg *waE2E.Message) (whatsmeow.SendResponse, error) {
+		sendCtx, sendCancel := context.WithTimeout(context.Background(), timeout)
+		defer sendCancel()
+		return client.SendMessage(sendCtx, jid, msg)
+	}
+
+	if isDirectChat && !forceStructured {
+		fallbackText := buildEventFallbackText(name, description, joinLink, startTime, endTime)
+		msg := &waE2E.Message{
+			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+				Text: proto.String(fallbackText),
+			},
+		}
+
+		resp, err := sendMessageWithTimeout(30*time.Second, msg)
+		if err != nil {
+			return "", fmt.Errorf("falha ao enviar fallback textual de evento: %w", err)
+		}
+
+		s.logger.Warnf("[%s] Evento enviado como texto por compatibilidade em chat direto", sessionKey)
+		s.logger.Infof(
+			"[%s] Evento fallback enviado para %s (id=%s, server_ts=%s, server_id=%d)",
+			sessionKey,
+			number,
+			resp.ID,
+			resp.Timestamp.Format(time.RFC3339),
+			resp.ServerID,
+		)
+
+		messageID := resp.ID
+		if messageID == "" {
+			messageID = "unknown"
+		}
+		return messageID, nil
+	}
+
+	finalJoinLink := strings.TrimSpace(joinLink)
+	normalizedCallType := strings.ToLower(strings.TrimSpace(callType))
+
+	if normalizedCallType == "" && isDirectChat && forceStructured && finalJoinLink != "" && !isWhatsAppCallLink(finalJoinLink) {
+		return "", fmt.Errorf("join_link externo não gera cartão nativo em chat direto; informe call_type ('video' ou 'voice') sem join_link, ou use link call.whatsapp.com")
+	}
+
+	if normalizedCallType != "" {
+		var mediaType whatsmeow.CallLinkType
+		var callLinkPrefix string
+		switch normalizedCallType {
+		case "video":
+			mediaType = whatsmeow.CallLinkTypeVideo
+			callLinkPrefix = whatsmeow.CallLinkVideoPrefix
+		case "voice":
+			mediaType = whatsmeow.CallLinkTypeAudio
+			callLinkPrefix = whatsmeow.CallLinkAudioPrefix
+		default:
+			return "", fmt.Errorf("call_type inválido: %s", callType)
+		}
+
+		// To match the native card, prefer official WhatsApp call links when call_type is requested.
+		if finalJoinLink == "" || !isWhatsAppCallLink(finalJoinLink) {
+			linkCtx, linkCancel := context.WithTimeout(context.Background(), 25*time.Second)
+			token, linkErr := client.CreateCallLink(linkCtx, mediaType, time.Unix(startTime, 0))
+			linkCancel()
+			if linkErr != nil {
+				if isDirectChat && forceStructured {
+					return "", fmt.Errorf("falha ao criar link oficial de chamada do WhatsApp: %w", linkErr)
+				}
+				s.logger.Warnf("[%s] Falha ao criar link oficial de chamada (%v), mantendo join_link informado", sessionKey, linkErr)
+			} else {
+				finalJoinLink = callLinkPrefix + token
+			}
+		}
+		isScheduleCall = true
+	}
+
+	s.logger.Infof(
+		"[%s] Preparando envio de evento (to=%s, server=%s, force_structured=%t, call_type=%s, is_schedule_call=%t, has_join_link=%t, has_reminder=%t, reminder_offset_sec=%d)",
+		sessionKey,
+		number,
+		jid.Server,
+		forceStructured,
+		normalizedCallType,
+		isScheduleCall,
+		finalJoinLink != "",
+		hasReminder,
+		reminderOffsetSec,
+	)
+
+	if isDirectChat && forceStructured {
+		s.logger.Warnf("[%s] Forçando EventMessage nativo em chat direto; requer cliente WhatsApp compatível no destino", sessionKey)
+	}
+
+	eventMsg := &waE2E.EventMessage{
+		Name:       proto.String(name),
+		StartTime:  proto.Int64(startTime),
+		IsCanceled: proto.Bool(false),
+	}
+	if description != "" {
+		eventMsg.Description = proto.String(description)
+	}
+	if finalJoinLink != "" {
+		eventMsg.JoinLink = proto.String(finalJoinLink)
+	}
+	if endTime > 0 {
+		eventMsg.EndTime = proto.Int64(endTime)
+	}
+	if extraGuestsAllowed {
+		eventMsg.ExtraGuestsAllowed = proto.Bool(true)
+	}
+	if isScheduleCall {
+		eventMsg.IsScheduleCall = proto.Bool(true)
+	}
+	if hasReminder {
+		eventMsg.HasReminder = proto.Bool(true)
+	}
+	if hasReminder && reminderOffsetSec > 0 {
+		eventMsg.ReminderOffsetSec = proto.Int64(reminderOffsetSec)
+	}
+
+	msg := &waE2E.Message{
+		EventMessage: eventMsg,
+		MessageContextInfo: &waE2E.MessageContextInfo{
+			MessageSecret: random.Bytes(32),
+		},
+	}
+
+	resp, err := sendMessageWithTimeout(45*time.Second, msg)
+	if err != nil {
+		return "", fmt.Errorf("falha ao enviar evento: %w", err)
+	}
+	s.logger.Infof(
+		"[%s] Evento enviado para %s (id=%s, server_ts=%s, server_id=%d, start_time=%d)",
+		sessionKey,
+		number,
+		resp.ID,
+		resp.Timestamp.Format(time.RFC3339),
+		resp.ServerID,
+		startTime,
+	)
+	messageID := resp.ID
+	if messageID == "" {
+		messageID = "unknown"
+	}
+
+	return messageID, nil
+}
+
+func isWhatsAppCallLink(link string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(link))
+	return strings.HasPrefix(normalized, strings.ToLower(whatsmeow.CallLinkAudioPrefix)) ||
+		strings.HasPrefix(normalized, strings.ToLower(whatsmeow.CallLinkVideoPrefix))
+}
+
+func inferCallTypeForDirectEvent(joinLink string, isScheduleCall, hasReminder bool) (string, string) {
+	normalized := strings.ToLower(strings.TrimSpace(joinLink))
+	if strings.HasPrefix(normalized, strings.ToLower(whatsmeow.CallLinkVideoPrefix)) {
+		return "video", "join_link_video"
+	}
+	if strings.HasPrefix(normalized, strings.ToLower(whatsmeow.CallLinkAudioPrefix)) {
+		return "voice", "join_link_voice"
+	}
+	if strings.TrimSpace(joinLink) != "" {
+		return "video", "join_link_present_default_video"
+	}
+	if isScheduleCall {
+		return "video", "is_schedule_call_default_video"
+	}
+	if hasReminder {
+		return "video", "has_reminder_default_video"
+	}
+	return "", ""
+}
+
+func (s *MultiTenantWhatsAppService) setPendingEventFallback(messageID string, chat types.JID, text string) {
+	id := strings.TrimSpace(messageID)
+	if id == "" || strings.TrimSpace(text) == "" {
+		return
+	}
+
+	now := time.Now()
+	exp := now.Add(10 * time.Minute)
+
+	s.pendingEventFallbackMu.Lock()
+	for k, v := range s.pendingEventFallback {
+		if v.expiresAt.Before(now) {
+			delete(s.pendingEventFallback, k)
+		}
+	}
+	s.pendingEventFallback[id] = pendingEventFallback{
+		chat:      chat,
+		text:      text,
+		expiresAt: exp,
+	}
+	s.pendingEventFallbackMu.Unlock()
+}
+
+func (s *MultiTenantWhatsAppService) popPendingEventFallback(messageID string) (pendingEventFallback, bool) {
+	id := strings.TrimSpace(messageID)
+	if id == "" {
+		return pendingEventFallback{}, false
+	}
+
+	s.pendingEventFallbackMu.Lock()
+	defer s.pendingEventFallbackMu.Unlock()
+
+	pending, ok := s.pendingEventFallback[id]
+	if !ok {
+		return pendingEventFallback{}, false
+	}
+	delete(s.pendingEventFallback, id)
+	if pending.expiresAt.Before(time.Now()) {
+		return pendingEventFallback{}, false
+	}
+	return pending, true
+}
+
+func buildEventFallbackText(name, description, joinLink string, startTime, endTime int64) string {
+	lines := []string{
+		fmt.Sprintf("Evento: %s", strings.TrimSpace(name)),
+		fmt.Sprintf("Inicio: %s", time.Unix(startTime, 0).In(time.Local).Format("02/01/2006 15:04")),
+	}
+	if endTime > 0 {
+		lines = append(lines, fmt.Sprintf("Fim: %s", time.Unix(endTime, 0).In(time.Local).Format("02/01/2006 15:04")))
+	}
+	if strings.TrimSpace(description) != "" {
+		lines = append(lines, fmt.Sprintf("Descricao: %s", strings.TrimSpace(description)))
+	}
+	if strings.TrimSpace(joinLink) != "" {
+		lines = append(lines, fmt.Sprintf("Link: %s", strings.TrimSpace(joinLink)))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (s *MultiTenantWhatsAppService) ListSessions() ([]*models.WhatsAppSession, error) {
@@ -853,6 +1263,15 @@ func (s *MultiTenantWhatsAppService) DeleteSession(sessionKey string, tenantID s
 func (s *MultiTenantWhatsAppService) parsePhoneNumber(number string) (types.JID, error) {
 	n := strings.TrimSpace(number)
 	n = strings.NewReplacer(" ", "", "-", "", "(", "", ")", "").Replace(n)
+
+	// Allow raw JIDs (e.g. group IDs like 1203...@g.us) without forcing phone normalization.
+	if strings.Contains(n, "@") {
+		jid, err := types.ParseJID(n)
+		if err != nil {
+			return types.JID{}, fmt.Errorf("jid inválido: %w", err)
+		}
+		return jid, nil
+	}
 
 	if !strings.HasSuffix(n, "@s.whatsapp.net") {
 		if !strings.HasPrefix(n, s.config.WhatsApp.DefaultCountry) {
@@ -970,6 +1389,23 @@ func (s *MultiTenantWhatsAppService) downloadMedia(url string) ([]byte, string, 
 	return data, ct, nil
 }
 
+func normalizeExpectedContentType(detected, provided, expectedPrefix string) string {
+	candidate := strings.TrimSpace(detected)
+	if candidate == "" || strings.EqualFold(candidate, "application/octet-stream") {
+		candidate = strings.TrimSpace(provided)
+	}
+	if candidate == "" {
+		return ""
+	}
+	if strings.HasPrefix(strings.ToLower(candidate), strings.ToLower(expectedPrefix)) {
+		return candidate
+	}
+	if strings.HasPrefix(strings.ToLower(provided), strings.ToLower(expectedPrefix)) {
+		return strings.TrimSpace(provided)
+	}
+	return ""
+}
+
 func (s *MultiTenantWhatsAppService) determineMediaType(contentType string) whatsmeow.MediaType {
 	switch {
 	case strings.HasPrefix(contentType, "image/"):
@@ -980,6 +1416,19 @@ func (s *MultiTenantWhatsAppService) determineMediaType(contentType string) what
 		return whatsmeow.MediaAudio
 	default:
 		return whatsmeow.MediaDocument
+	}
+}
+
+func mediaTypeToMessageType(mediaType whatsmeow.MediaType) string {
+	switch mediaType {
+	case whatsmeow.MediaImage:
+		return "image"
+	case whatsmeow.MediaVideo:
+		return "video"
+	case whatsmeow.MediaAudio:
+		return "audio"
+	default:
+		return "document"
 	}
 }
 
