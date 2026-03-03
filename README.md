@@ -4,21 +4,83 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat&logo=docker)](https://www.docker.com/)
 
-API REST em Go para gerenciar múltiplas sessões do WhatsApp com isolamento por `SESSIONKEY`, suporte a Docker e banco SQLite/PostgreSQL.
+API REST em Go para gerenciar múltiplas sessões do WhatsApp, enviar mensagens, persistir histórico, registrar webhooks e consumir eventos em tempo real via WebSocket.
 
-## ✅ Principais recursos
+## Implementações atuais
 
-- Multi sessões com isolamento por `SESSIONKEY`
-- Autenticação dupla: `API_TOKEN` + `SESSIONKEY`
-- QR code automático com atualização no banco
-- Envio de mídia (URL/Base64)
-- SQLite e PostgreSQL
+- Multi sessões com registro, QR Code, listagem, desconexão e remoção de sessão.
+- Envio de mensagens de texto, mídia, áudio, vídeo, enquete e evento.
+- Persistência de mensagens de entrada e saída no banco.
+- Armazenamento local de mídia com limpeza automática por retenção.
+- Histórico paginado de conversas, contatos e estatísticas por sessão.
+- Download de anexos via endpoint próprio de mídia.
+- Webhooks com logs de execução.
+- WebSocket para eventos em tempo real.
+- Compatibilidade com rotas legadas `/sendText`, `/sendMedia`, `/sendAudio`, `/sendVideo`, `/sendPoll` e `/sendEvent`.
 
-## 🚀 Início rápido
+## Collection do Postman
 
-### 1) Configurar ambiente
+O projeto inclui a collection atualizada em [API BOT Whats Golang.postman_collection.json](API%20BOT%20Whats%20Golang.postman_collection.json).
 
-Copie e edite o arquivo de exemplo:
+Variáveis principais da collection:
+
+- `baseUrl`: URL HTTP da API.
+- `wsBaseUrl`: URL WebSocket da API.
+- `apiToken`: valor do `API_TOKEN`.
+- `tenantSessionKey`: valor usado nos endpoints de gerenciamento de sessões.
+- `waSessionKey`: valor da `whatsappSessionKey` registrada.
+- `sessionID`: UUID da sessão para endpoints administrativos de conversa.
+- `messageID`: UUID da mensagem para baixar mídia.
+- `webhookId`: UUID do webhook.
+
+## Autenticação
+
+### 1. Endpoints de gerenciamento de sessão
+
+Use:
+
+- Header `apitoken: <API_TOKEN>`
+- Header `SESSIONKEY: <chave-do-tenant-ou-contexto>`
+
+Esses endpoints são:
+
+- `POST /api/v1/whatsapp/register`
+- `GET /api/v1/whatsapp/qrcode/{sessionKey}`
+- `GET /api/v1/whatsapp/sessions`
+- `POST /api/v1/whatsapp/disconnect/{sessionKey}`
+- `DELETE /api/v1/whatsapp/sessions/{sessionKey}`
+- `GET /api/v1/conversations/{sessionID}*`
+- `GET /api/v1/conversations/{sessionID}/contacts`
+- `GET /api/v1/conversations/{sessionID}/stats`
+
+### 2. Endpoints escopados por sessão WhatsApp
+
+Use uma das opções abaixo:
+
+- Header `apitoken: <API_TOKEN>`
+- Ou `Authorization: Bearer <API_TOKEN>`
+
+E também:
+
+- Header `X-WhatsApp-Session-Key: <whatsappSessionKey>`
+
+Esses endpoints são:
+
+- Todos os `POST /api/v1/messages/*`
+- `GET /api/v1/messages/history`
+- `GET /api/v1/messages/contacts`
+- `GET /api/v1/messages/stats`
+- `GET /api/v1/messages/{messageID}/media/{filename}`
+- `GET /api/v1/ws`
+- Todos os `POST/GET/PUT/DELETE /api/v1/webhooks*`
+
+### 3. Health check
+
+`GET /health` não exige autenticação.
+
+## Início rápido
+
+### 1. Configurar o ambiente
 
 ```bash
 cp .env.example .env
@@ -27,37 +89,145 @@ cp .env.example .env
 Exemplo mínimo:
 
 ```env
+SERVER_PORT=8080
 API_TOKEN=seu-token
-SESSION_KEY=sua-session-key
+SESSION_KEY=chave-obrigatoria-para-boot
 DB_DRIVER=sqlite3
 DB_DSN=file:whatsapp.db?_foreign_keys=on
+MEDIA_STORAGE_PATH=storage/media
+MEDIA_RETENTION_DAYS=7
+MEDIA_CLEANUP_INTERVAL=24h
 ```
 
-### 2) Rodar com Go
+### 2. Rodar com Go
 
 ```bash
 go mod download
 go run cmd/api/main.go
 ```
 
-### 3) Rodar com Docker
+### 3. Rodar com Docker
 
 ```bash
 docker-compose up -d
 ```
 
-## 🔐 Isolamento por sessão
+## Variáveis de ambiente
 
-Cada `SESSIONKEY` é um namespace isolado. Uma sessão **nunca** vê dados de outra.
+### Servidor
 
-## 📌 Fluxo básico
+| Variável | Descrição | Padrão |
+| --- | --- | --- |
+| `SERVER_PORT` | Porta HTTP | `8080` |
+| `SERVER_READ_TIMEOUT` | Timeout de leitura | `15s` |
+| `SERVER_WRITE_TIMEOUT` | Timeout de escrita | `15s` |
+| `SERVER_IDLE_TIMEOUT` | Timeout idle | `60s` |
+| `SERVER_SHUTDOWN_TIMEOUT` | Timeout de desligamento | `10s` |
+| `MAX_UPLOAD_SIZE` | Tamanho máximo de upload | `52428800` |
 
-1. Registrar sessão
+### Mídia
+
+| Variável | Descrição | Padrão |
+| --- | --- | --- |
+| `MEDIA_STORAGE_PATH` | Pasta onde anexos são salvos localmente | `storage/media` |
+| `MEDIA_RETENTION_DAYS` | Dias de retenção dos arquivos locais | `7` |
+| `MEDIA_CLEANUP_INTERVAL` | Intervalo do job de limpeza | `24h` |
+
+### WhatsApp
+
+| Variável | Descrição | Padrão |
+| --- | --- | --- |
+| `WHATSAPP_SESSION_KEY` | Chave padrão | `default-session` |
+| `WHATSAPP_DEFAULT_COUNTRY` | Código de país padrão | `55` |
+| `WHATSAPP_QR_GENERATE` | Habilita QR no terminal | `true` |
+| `WHATSAPP_RECONNECT_DELAY` | Delay de reconexão | `5s` |
+
+### Autenticação
+
+| Variável | Descrição | Obrigatória |
+| --- | --- | --- |
+| `API_TOKEN` | Token global da API | Sim |
+| `SESSION_KEY` | Valor obrigatório para inicialização da aplicação | Sim |
+
+### Banco
+
+| Variável | Descrição | Exemplo |
+| --- | --- | --- |
+| `DB_DRIVER` | Driver do banco | `sqlite3` ou `postgres` |
+| `DB_DSN` | String de conexão | `file:whatsapp.db?_foreign_keys=on` |
+
+## Endpoints
+
+### Health
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `GET` | `/health` | Status da aplicação e quantidade de sessões conectadas |
+
+### Sessões
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `POST` | `/api/v1/whatsapp/register` | Registra ou recria uma sessão e retorna QR code |
+| `GET` | `/api/v1/whatsapp/qrcode/{sessionKey}` | Consulta QR code da sessão |
+| `GET` | `/api/v1/whatsapp/sessions` | Lista sessões do contexto informado |
+| `POST` | `/api/v1/whatsapp/disconnect/{sessionKey}` | Desconecta uma sessão |
+| `DELETE` | `/api/v1/whatsapp/sessions/{sessionKey}` | Remove uma sessão |
+
+### Mensagens
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `POST` | `/api/v1/messages/text` | Envia mensagem de texto |
+| `POST` | `/api/v1/messages/media` | Envia imagem, documento ou mídia genérica via URL/Base64 |
+| `POST` | `/api/v1/messages/audio` | Envia áudio via URL/Base64 |
+| `POST` | `/api/v1/messages/video` | Envia vídeo via URL/Base64 |
+| `POST` | `/api/v1/messages/poll` | Envia enquete |
+| `POST` | `/api/v1/messages/event` | Envia evento |
+
+### Histórico e mídia
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `GET` | `/api/v1/messages/history` | Histórico da sessão autenticada |
+| `GET` | `/api/v1/messages/contacts` | Contatos únicos da sessão autenticada |
+| `GET` | `/api/v1/messages/stats` | Estatísticas da sessão autenticada |
+| `GET` | `/api/v1/messages/{messageID}/media/{filename}` | Baixa ou faz stream do anexo |
+| `GET` | `/api/v1/conversations/{sessionID}` | Histórico por `sessionID` |
+| `GET` | `/api/v1/conversations/{sessionID}/contacts` | Contatos por `sessionID` |
+| `GET` | `/api/v1/conversations/{sessionID}/stats` | Estatísticas por `sessionID` |
+
+### Webhooks e tempo real
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `GET` | `/api/v1/ws` | WebSocket de eventos |
+| `POST` | `/api/v1/webhooks` | Registra webhook |
+| `GET` | `/api/v1/webhooks` | Lista webhooks |
+| `GET` | `/api/v1/webhooks/{webhookId}` | Busca webhook |
+| `PUT` | `/api/v1/webhooks/{webhookId}` | Atualiza webhook |
+| `DELETE` | `/api/v1/webhooks/{webhookId}` | Remove webhook |
+| `GET` | `/api/v1/webhooks/{webhookId}/logs` | Consulta logs de entrega |
+
+### Aliases legados
+
+| Método | Rota | Equivalente |
+| --- | --- | --- |
+| `POST` | `/api/v1/sendText` | `/api/v1/messages/text` |
+| `POST` | `/api/v1/sendMedia` | `/api/v1/messages/media` |
+| `POST` | `/api/v1/sendAudio` | `/api/v1/messages/audio` |
+| `POST` | `/api/v1/sendVideo` | `/api/v1/messages/video` |
+| `POST` | `/api/v1/sendPoll` | `/api/v1/messages/poll` |
+| `POST` | `/api/v1/sendEvent` | `/api/v1/messages/event` |
+
+## Payloads e exemplos
+
+### Registrar sessão
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/whatsapp/register \
-  -H "apitoken: seu-api-token" \
-  -H "SESSIONKEY: sua-session-key" \
+  -H "apitoken: seu-token" \
+  -H "SESSIONKEY: tenant-demo" \
   -H "Content-Type: application/json" \
   -d '{
     "whatsappSessionKey": "cliente-001",
@@ -66,829 +236,256 @@ curl -X POST http://localhost:8080/api/v1/whatsapp/register \
   }'
 ```
 
-2. Obter QR code
-
-```bash
-curl http://localhost:8080/api/v1/whatsapp/qrcode/cliente-001 \
-  -H "apitoken: seu-api-token" \
-  -H "SESSIONKEY: sua-session-key"
-```
-
-3. Enviar mensagem
+### Enviar texto
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/messages/text \
-  -H "apitoken: seu-api-token" \
-  -H "SESSIONKEY: sua-session-key" \
+  -H "apitoken: seu-token" \
+  -H "X-WhatsApp-Session-Key: cliente-001" \
   -H "Content-Type: application/json" \
-  -d '{"sessionKey":"cliente-001","number":"554499999999","text":"Olá"}'
+  -d '{
+    "number": "5511999999999",
+    "text": "Olá"
+  }'
 ```
 
-## ℹ️ Observações
+### Enviar mídia
 
-- Se o QR expirar, um novo é gerado automaticamente.
-- Para re-registrar uma `whatsappSessionKey`, chame o `/register` novamente no mesmo tenant e escaneie o QR retornado.
-
-### 📎 Endpoints principais
-
-- `POST /api/v1/whatsapp/register`
-- `GET /api/v1/whatsapp/qrcode/{sessionKey}`
-- `GET /api/v1/whatsapp/sessions`
-- `POST /api/v1/whatsapp/disconnect/{sessionKey}`
-- `DELETE /api/v1/whatsapp/sessions/{sessionKey}`
-
-## 🔌 API Endpoints
-
-#### 4. Desconectar Sessão
-
-```http
-POST /api/v1/whatsapp/disconnect/{sessionKey}
-```
-
-**Resposta:**
+Via URL:
 
 ```json
 {
-  "status": "success",
-  "message": "Sessão desconectada com sucesso"
-}
-```
-
-#### 5. Deletar Sessão
-
-```http
-DELETE /api/v1/whatsapp/sessions/{sessionKey}
-```
-
-**Resposta:**
-
-```json
-{
-  "status": "success",
-  "message": "Sessão deletada com sucesso"
-}
-```
-
-### Envio de Mensagens
-
-#### 1. Enviar Mensagem de Texto
-
-```http
-POST /api/v1/messages/text
-```
-
-**Body:**
-
-```json
-{
-  "session_key": "cliente-empresa-001",
   "number": "5511999999999",
-  "text": "Olá! Esta é uma mensagem de teste."
+  "caption": "Arquivo de teste",
+  "media_url": "https://example.com/arquivo.pdf"
 }
 ```
 
-**Resposta:**
+Via Base64:
+
+```json
+{
+  "number": "5511999999999",
+  "caption": "Imagem em base64",
+  "media_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+  "mime_type": "image/png"
+}
+```
+
+### Enviar áudio
+
+```json
+{
+  "number": "5511999999999",
+  "media_url": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
+  "mime_type": "audio/mpeg",
+  "ptt": false
+}
+```
+
+### Enviar vídeo
+
+```json
+{
+  "number": "5511999999999",
+  "caption": "Vídeo de teste",
+  "media_url": "https://samplelib.com/lib/preview/mp4/sample-5s.mp4",
+  "mime_type": "video/mp4",
+  "gif_playback": false
+}
+```
+
+### Enviar enquete
+
+```json
+{
+  "number": "5511999999999",
+  "question": "Qual opção você prefere?",
+  "options": ["Opção A", "Opção B", "Opção C"],
+  "selectable_options_count": 1
+}
+```
+
+### Enviar evento
+
+```json
+{
+  "number": "5511999999999",
+  "name": "Reunião semanal",
+  "description": "Alinhamento de sprint",
+  "join_link": "https://call.whatsapp.com/video/SEU_TOKEN_REAL_AQUI",
+  "start_time": "2026-04-01T09:00:00",
+  "end_time": "2026-04-01T10:00:00",
+  "call_type": "video",
+  "force_structured": true,
+  "extra_guests_allowed": true,
+  "is_schedule_call": true,
+  "has_reminder": true,
+  "reminder_offset_sec": 900
+}
+```
+
+Regras importantes do endpoint de evento:
+
+- `start_time` aceita RFC3339, `YYYY-MM-DD HH:MM[:SS]` e Unix timestamp em segundos ou milissegundos.
+- `start_time` precisa estar no futuro.
+- `end_time` é opcional, mas não pode ser menor que `start_time`.
+- `call_type` aceita apenas `voice` ou `video`.
+- Se `has_reminder=true` e `reminder_offset_sec<=0`, a API assume `900`.
+
+### Registrar webhook
+
+```bash
+curl -X POST http://localhost:8080/api/v1/webhooks \
+  -H "apitoken: seu-token" \
+  -H "X-WhatsApp-Session-Key: cliente-001" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://seu-servidor.com/webhook",
+    "events": ["message.sent", "message.received", "message.read"],
+    "headers": {
+      "Authorization": "Bearer token-custom"
+    }
+  }'
+```
+
+### Histórico da sessão autenticada
+
+```bash
+curl "http://localhost:8080/api/v1/messages/history?limit=50&offset=0&include_media=true&contact=5511999999999" \
+  -H "apitoken: seu-token" \
+  -H "X-WhatsApp-Session-Key: cliente-001"
+```
+
+Parâmetros disponíveis:
+
+- `limit`
+- `offset`
+- `contact`
+- `include_media=true`
+
+### WebSocket
+
+```text
+ws://localhost:8080/api/v1/ws?apitoken=seu-token&session_key=cliente-001&whatsapp_session_key=cliente-001
+```
+
+## Formato de resposta
+
+### Resposta padrão de sucesso
 
 ```json
 {
   "status": "success",
   "message": "Mensagem enviada com sucesso",
   "data": {
+    "message_id": "3EB0C767D8F2D2A2",
     "recipient": "5511999999999",
     "type": "text",
-    "sent_at": "2026-01-30T10:30:00Z"
+    "sent_at": "2026-03-03T12:00:00Z"
+  },
+  "timestamp": "2026-03-03T12:00:00Z"
+}
+```
+
+### Resposta padrão de erro
+
+```json
+{
+  "status": "error",
+  "message": "Header X-WhatsApp-Session-Key é obrigatório",
+  "code": "MISSING_SESSION_KEY",
+  "timestamp": "2026-03-03T12:00:00Z"
+}
+```
+
+### Resposta do histórico
+
+`GET /api/v1/messages/history` e `GET /api/v1/conversations/{sessionID}` retornam:
+
+```json
+{
+  "messages": [],
+  "pagination": {
+    "total": 0,
+    "limit": 50,
+    "offset": 0
   }
 }
 ```
 
-#### 2. Enviar Mensagem com Mídia
+Quando a mensagem possui anexo, a API pode retornar:
 
-```http
-POST /api/v1/messages/media
-```
+- `media_download_url`
+- `media_url`
+- `mime_type`
+- `media_base64` quando `include_media=true`
 
-**Body (com URL):**
+## Eventos emitidos
 
-```json
-{
-  "session_key": "cliente-empresa-001",
-  "number": "5511999999999",
-  "caption": "Confira esta imagem!",
-  "media_url": "https://example.com/image.jpg"
-}
-```
+### Webhooks
 
-**Body (com Base64):**
+Eventos aceitos no cadastro:
 
-```json
-{
-  "session_key": "cliente-empresa-001",
-  "number": "5511999999999",
-  "caption": "Documento importante",
-  "media_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
-  "mime_type": "image/png"
-}
-```
+- `message.sent`
+- `message.received`
+- `message.read`
+- `*`
 
-**Resposta:**
+Exemplo de payload:
 
 ```json
 {
-  "status": "success",
-  "message": "Mensagem com mídia enviada com sucesso",
+  "event": "message.received",
+  "session_key": "cliente-001",
+  "tenant_id": "cliente-001",
+  "timestamp": "2026-03-03T12:00:00Z",
   "data": {
-    "recipient": "5511999999999",
-    "type": "media",
-    "sent_at": "2026-01-30T10:30:00Z"
+    "message_id": "ABCD1234",
+    "from": "5511999999999@s.whatsapp.net",
+    "type": "text",
+    "text": "Olá",
+    "timestamp": "2026-03-03T12:00:00Z"
   }
 }
 ```
 
-### Health Check
+### WebSocket
 
-```http
-GET /health
-```
+Eventos publicados em tempo real:
 
-**Resposta:**
+- `ws.connected`
+- `session.connected`
+- `session.disconnected`
+- `session.logged_out`
+- `message.sent`
+- `message.received`
+- `message.receipt`
+
+## Persistência de mídia e histórico
+
+- Mensagens de entrada e saída são salvas na tabela `messages`.
+- Mídias podem ser baixadas do WhatsApp e armazenadas localmente em `MEDIA_STORAGE_PATH`.
+- Quando uma mídia está salva localmente, o sistema passa a referenciá-la em formato `local://...`.
+- O endpoint `GET /api/v1/messages/{messageID}/media/{filename}` faz streaming da mídia a partir do arquivo local ou da URL original.
+- O job de limpeza remove arquivos antigos com base em `MEDIA_RETENTION_DAYS` e `MEDIA_CLEANUP_INTERVAL`.
+- Enquetes recebidas têm metadados persistidos em `poll_metadata` para resolução posterior de votos.
+
+## Health check
+
+Exemplo de resposta real:
 
 ```json
 {
   "status": "healthy",
   "service": "WhatsApp Bot API (Multi Sessões)",
   "version": "2.0.0",
-  "uptime": "2h30m15s",
-  "timestamp": "2026-01-30T10:30:00Z",
+  "uptime": "1m12.345s",
+  "timestamp": "2026-03-03T12:00:00Z",
   "checks": {
-    "whatsapp": "2 sessions connected",
-    "database": "ok"
+    "api": "ok",
+    "total_sessions": "1",
+    "connected_sessions": "1"
   }
 }
 ```
-
-## ⚙️ Variáveis de Ambiente
-
-Todas as configurações são feitas através de variáveis de ambiente:
-
-### Servidor
-
-| Variável                  | Descrição                        | Padrão            |
-| ------------------------- | -------------------------------- | ----------------- |
-| `SERVER_PORT`             | Porta do servidor HTTP           | `8080`            |
-| `SERVER_READ_TIMEOUT`     | Timeout de leitura               | `15s`             |
-| `SERVER_WRITE_TIMEOUT`    | Timeout de escrita               | `15s`             |
-| `SERVER_IDLE_TIMEOUT`     | Timeout de idle                  | `60s`             |
-| `SERVER_SHUTDOWN_TIMEOUT` | Timeout de shutdown              | `10s`             |
-| `MAX_UPLOAD_SIZE`         | Tamanho máximo de upload (bytes) | `52428800` (50MB) |
-
-### WhatsApp
-
-| Variável                   | Descrição                       | Padrão            |
-| -------------------------- | ------------------------------- | ----------------- |
-| `WHATSAPP_SESSION_KEY`     | Chave da sessão WhatsApp padrão | `default-session` |
-| `WHATSAPP_DEFAULT_COUNTRY` | Código do país padrão           | `55`              |
-| `WHATSAPP_QR_GENERATE`     | Gerar QR Code no terminal       | `true`            |
-| `WHATSAPP_RECONNECT_DELAY` | Delay para reconexão            | `5s`              |
-
-### Autenticação
-
-| Variável      | Descrição                    | Obrigatório |
-| ------------- | ---------------------------- | ----------- |
-| `API_TOKEN`   | Token de autenticação da API | ✅ Sim      |
-| `SESSION_KEY` | Chave de sessão              | ✅ Sim      |
-
-### Banco de Dados
-
-| Variável    | Descrição         | Exemplo                                                                    |
-| ----------- | ----------------- | -------------------------------------------------------------------------- |
-| `DB_DRIVER` | Driver do banco   | `sqlite3` ou `postgres`                                                    |
-| `DB_DSN`    | String de conexão | `file:whatsapp.db?_foreign_keys=on` ou `postgres://user:pass@host:port/db` |
-
-## 🏗️ Estrutura do Projeto
-
-```
-boot-whatsapp-golang/
-├── cmd/
-│   └── api/
-│       └── main.go                    # Ponto de entrada da aplicação
-├── internal/
-│   ├── config/
-│   │   └── config.go                  # Configuração centralizada
-│   ├── handlers/
-│   │   ├── handlers.go                # HTTP handlers (compatibilidade)
-│   │   ├── multitenant_handler.go     # Handlers Multi Sessões
-│   │   └── session_handler.go         # Handlers de gerenciamento de sessões
-│   ├── middleware/
-│   │   └── middleware.go              # Middleware (auth, logging, recovery, CORS)
-│   ├── models/
-│   │   └── models.go                  # Estruturas de dados
-│   ├── repository/
-│   │   └── session_repository.go      # Camada de acesso aos dados
-│   └── services/
-│       ├── whatsapp.go                # Serviço WhatsApp (compatibilidade)
-│       └── whatsapp_tenant.go    # Serviço WhatsApp Multi Sessões
-├── migrations/
-│   ├── 001_create_whatsapp_sessions.sql  # Migração inicial
-│   ├── 002_add_device_jid.sql            # Adiciona campo device_jid
-│   └── 003_add_sessão_id.sql             # Adiciona isolamento Multi Sessões
-├── pkg/
-│   ├── logger/
-│   │   └── logger.go                  # Sistema de logging estruturado
-│   └── validator/
-│       └── validator.go               # Validações de dados
-├── .env.example                       # Exemplo de configuração
-├── .gitignore                         # Arquivos ignorados pelo Git
-├── docker-compose.yml                 # Configuração Docker Compose
-├── Dockerfile                         # Dockerfile multi-stage otimizado
-├── go.mod                             # Dependências Go
-├── go.sum                             # Checksums das dependências
-├── LICENSE                            # Licença MIT
-└── README.md                          # Documentação
-```
-
-## 🔒 Segurança e Isolamento Multi Sessões
-
-### Autenticação em Duas Camadas
-
-1. **API_TOKEN** (Camada Global)
-   - Autentica o acesso ao sistema
-   - Compartilhado entre todos os sessãos/clientes
-   - Valida que a requisição é legítima
-
-2. **SESSION_KEY** (Camada de Sessão)
-   - Identifica e isola cada sessão/cliente
-   - Único para cada sessão
-   - Determina quais dados podem ser acessados
-
-### Isolamento de Dados
-
-- ✅ **Isolamento Total por Sessão**: Cada `SESSION_KEY` funciona como namespace isolado
-- ✅ **Impossível Cruzar Dados**: Uma sessão nunca vê dados de outros sessões
-- ✅ **Filtros Automáticos**: Backend aplica filtros por sessão em todas as queries
-- ✅ **Validação de Propriedade**: Operações validam que o recurso pertence à sessão
-- ✅ **Logs por Sessão**: Todas as ações são registradas com identificação da sessão
-
-### Recursos de Segurança
-
-- ✅ Autenticação via API Token e Session Key em todos os endpoints
-- ✅ Validação de entrada em todas as requisições
-- ✅ Sanitização de números de telefone
-- ✅ Limitação de tamanho de upload (50MB padrão)
-- ✅ CORS configurável via middleware
-- ✅ Timeouts configurados para prevenir ataques
-- ✅ Logs de tentativas de acesso não autorizado
-- ✅ Isolamento de sessões (Multi Sessões)
-- ✅ Armazenamento seguro de credenciais no banco
-
-## 📊 Monitoramento e Health Check
-
-A API possui um endpoint de health check completo:
-
-```bash
-curl http://localhost:8080/health
-```
-
-**Resposta detalhada:**
-
-```json
-{
-  "status": "healthy",
-  "service": "WhatsApp Bot API (Multi Sessões)",
-  "version": "2.0.0",
-  "uptime": "2h30m15s",
-  "timestamp": "2026-01-30T10:30:00Z",
-  "checks": {
-    "whatsapp": "2 sessions connected",
-    "database": "ok"
-  }
-}
-```
-
-Este endpoint verifica:
-
-- ✅ Status geral do serviço
-- ✅ Número de sessões WhatsApp conectadas
-- ✅ Conectividade com o banco de dados
-- ✅ Tempo de uptime do servidor
-- ✅ Versão atual da API
-
-## 🐛 Tratamento de Erros
-
-Todos os erros seguem um formato padronizado JSON:
-
-```json
-{
-  "status": "error",
-  "message": "Descrição legível do erro",
-  "code": "ERROR_CODE",
-  "details": {
-    "field": "informação adicional sobre o erro"
-  },
-  "timestamp": "2026-01-30T10:30:00Z"
-}
-```
-
-### Códigos de Erro
-
-| Código                  | Descrição                                    | Status HTTP |
-| ----------------------- | -------------------------------------------- | ----------- |
-| `AUTH_INVALID`          | Token ou session key inválidos               | 401         |
-| `SESSION_KEY_REQUIRED`  | Header SESSIONKEY ausente (obrigatório)      | 401         |
-| `UNAUTHORIZED`          | Tentativa de acessar recurso de outro sessão | 401         |
-| `INVALID_JSON`          | Corpo da requisição malformado               | 400         |
-| `VALIDATION_ERROR`      | Dados de entrada inválidos                   | 400         |
-| `INVALID_PHONE`         | Formato de número de telefone inválido       | 400         |
-| `SESSION_NOT_FOUND`     | Sessão WhatsApp não encontrada neste sessão  | 404         |
-| `SESSION_NOT_CONNECTED` | Sessão não está conectada                    | 400         |
-| `SEND_FAILED`           | Falha ao enviar mensagem                     | 500         |
-| `MEDIA_DOWNLOAD_FAILED` | Falha ao baixar mídia                        | 500         |
-| `INTERNAL_ERROR`        | Erro interno do servidor                     | 500         |
-
-### Exemplos de Erros de Segurança
-
-**SESSION_KEY ausente:**
-
-```json
-{
-  "status": "error",
-  "message": "SESSION_KEY é obrigatório",
-  "code": "SESSION_KEY_REQUIRED",
-  "timestamp": "2026-01-30T10:30:00Z"
-}
-```
-
-**Tentativa de acessar sessão de outra sessão:**
-
-```json
-{
-  "status": "error",
-  "message": "Sessão não encontrada para este sessão",
-  "code": "SESSION_NOT_FOUND",
-  "timestamp": "2026-01-30T10:30:00Z"
-}
-```
-
-## 🧪 Testando a API
-
-### Teste Rápido com cURL
-
-```bash
-# 1. Health Check
-curl http://localhost:8080/health
-
-# 2. Registrar nova sessão
-curl -X POST http://localhost:8080/api/v1/whatsapp/register \
-  -H "apitoken: seu-token" \
-  -H "SESSIONKEY: sua-chave" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "session_key": "teste-001",
-    "nome_pessoa": "Teste User",
-    "email_pessoa": "teste@example.com"
-  }'
-
-# 3. Obter QR Code
-curl http://localhost:8080/api/v1/whatsapp/qrcode/teste-001 \
-  -H "apitoken: seu-token" \
-  -H "SESSIONKEY: sua-chave"
-
-# 4. Listar sessões
-curl http://localhost:8080/api/v1/whatsapp/sessions \
-  -H "apitoken: seu-token" \
-  -H "SESSIONKEY: sua-chave"
-
-# 5. Enviar mensagem de texto
-curl -X POST http://localhost:8080/api/v1/messages/text \
-  -H "apitoken: seu-token" \
-  -H "SESSIONKEY: sua-chave" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "session_key": "teste-001",
-    "number": "5511999999999",
-    "text": "Olá! Mensagem de teste."
-  }'
-
-# 6. Enviar imagem via URL
-curl -X POST http://localhost:8080/api/v1/messages/media \
-  -H "apitoken: seu-token" \
-  -H "SESSIONKEY: sua-chave" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "session_key": "teste-001",
-    "number": "5511999999999",
-    "caption": "Imagem de teste",
-    "media_url": "https://picsum.photos/800/600"
-  }'
-```
-
-### Variáveis de Ambiente para Testes
-
-Crie um arquivo `.env` com suas credenciais para facilitar os testes:
-
-```env
-API_TOKEN=seu-token-gerado
-SESSION_KEY=sua-chave-gerada
-```
-
-## 🏢 Casos de Uso Multi Sessões
-
-### Cenário 1: Agência de Marketing com Múltiplos Clientes
-
-```bash
-# Cliente A - E-commerce
-export API_TOKEN="token-global-agencia"
-export SESSION_A="ecommerce-cliente-a"
-
-curl -X POST http://localhost:8080/api/v1/whatsapp/register \
-  -H "apitoken: $API_TOKEN" \
-  -H "SESSIONKEY: $SESSION_A" \
-  -d '{"whatsappSessionKey": "vendas-loja", "nomePessoa": "Vendedor", "emailPessoa": "vendas@clientea.com"}'
-
-# Cliente B - Restaurante
-export SESSION_B="restaurante-cliente-b"
-
-curl -X POST http://localhost:8080/api/v1/whatsapp/register \
-  -H "apitoken: $API_TOKEN" \
-  -H "SESSIONKEY: $SESSION_B" \
-  -d '{"whatsappSessionKey": "pedidos-resto", "nomePessoa": "Atendente", "emailPessoa": "pedidos@clienteb.com"}'
-
-# Resultado: Cada cliente vê apenas suas próprias sessões
-```
-
-### Cenário 2: Empresa com Múltiplos Departamentos
-
-```bash
-# Departamento de Vendas
-curl http://localhost:8080/api/v1/whatsapp/sessions \
-  -H "apitoken: TOKEN_EMPRESA" \
-  -H "SESSIONKEY: dept-vendas-2024"
-# Retorna: Apenas sessões do departamento de vendas
-
-# Departamento de Suporte
-curl http://localhost:8080/api/v1/whatsapp/sessions \
-  -H "apitoken: TOKEN_EMPRESA" \
-  -H "SESSIONKEY: dept-suporte-2024"
-# Retorna: Apenas sessões do departamento de suporte
-```
-
-### Cenário 3: SaaS com Múltiplos Clientes
-
-Perfeito para plataformas SaaS que oferecem integração WhatsApp:
-
-```javascript
-// Backend da sua plataforma SaaS
-async function enviarWhatsApp(clienteId, numero, mensagem) {
-  const sessionKey = `saas-cliente-${clienteId}`; // Único por cliente
-
-  await fetch("http://whatsapp-api:8080/api/v1/messages/text", {
-    headers: {
-      apitoken: process.env.API_TOKEN,
-      SESSIONKEY: sessionKey, // Isola dados do cliente
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ number, text: mensagem }),
-  });
-}
-```
-
-## 🔄 Atualização e Manutenção
-
-### Atualizando a Aplicação
-
-```bash
-# Com Docker
-docker-compose down
-git pull origin main
-docker-compose up -d --build
-
-# Sem Docker
-git pull origin main
-go mod download
-go build -o whatsapp-bot cmd/api/main.go
-./whatsapp-bot
-```
-
-### Backup do Banco de Dados
-
-#### SQLite
-
-```bash
-# Backup
-cp whatsapp.db whatsapp.db.backup
-
-# Restore
-cp whatsapp.db.backup whatsapp.db
-```
-
-#### PostgreSQL
-
-```bash
-# Backup
-pg_dump -h localhost -U usuario whatsapp_bot > backup.sql
-
-# Restore
-psql -h localhost -U usuario whatsapp_bot < backup.sql
-```
-
-### Limpeza de Sessões Antigas
-
-```bash
-# Conectar ao banco e deletar sessões desconectadas há mais de 30 dias
-# SQLite
-sqlite3 whatsapp.db "DELETE FROM whatsapp_sessions WHERE status='disconnected' AND updated_at < datetime('now', '-30 days');"
-
-# PostgreSQL
-psql -c "DELETE FROM whatsapp_sessions WHERE status='disconnected' AND updated_at < NOW() - INTERVAL '30 days';"
-```
-
-## 📝 Logs e Debugging
-
-### Níveis de Log
-
-O sistema utiliza os seguintes níveis de log:
-
-- `DEBUG`: Informações detalhadas para debugging
-- `INFO`: Informações gerais de operação
-- `WARN`: Avisos que não impedem a operação
-- `ERROR`: Erros que afetam funcionalidades
-- `FATAL`: Erros críticos que param a aplicação
-
-### Exemplo de Logs
-
-```
-2026/01/30 10:30:00 [API] [INFO] Iniciando WhatsApp Bot API Multi Sessões...
-2026/01/30 10:30:01 [API] [INFO] Configuração carregada com sucesso
-2026/01/30 10:30:02 [API] [INFO] Conectado ao banco de dados com sucesso
-2026/01/30 10:30:03 [WhatsApp] [INFO] Carregando sessões existentes do banco de dados...
-2026/01/30 10:30:04 [WhatsApp] [INFO] Encontradas 2 sessões no banco de dados
-2026/01/30 10:30:05 [WhatsApp] [INFO] Sessão cliente-001 conectada com sucesso
-2026/01/30 10:30:06 [API] [INFO] Servidor API escutando na porta 8080
-```
-
-### Visualizando Logs em Tempo Real
-
-```bash
-# Docker
-docker-compose logs -f
-
-# Docker (apenas últimas 100 linhas)
-docker-compose logs -f --tail=100
-
-# Docker (específico do serviço)
-docker logs -f whatsapp-bot-api-golang
-```
-
-## 🛠️ Tecnologias Utilizadas
-
-- **Go 1.25+** - Linguagem de programação
-- **whatsmeow** - Biblioteca WhatsApp Web API
-- **gorilla/mux** - Roteador HTTP
-- **SQLite3 / PostgreSQL** - Banco de dados
-- **Docker** - Containerização
-- **Alpine Linux** - Imagem base otimizada
-
-### Principais Dependências
-
-```go
-github.com/gorilla/mux v1.8.1          // Router HTTP
-github.com/joho/godotenv v1.5.1        // Carregamento de .env
-go.mau.fi/whatsmeow v0.0.0-...         // WhatsApp Web API
-github.com/mattn/go-sqlite3 v1.14.33   // Driver SQLite
-github.com/lib/pq v1.11.1              // Driver PostgreSQL
-github.com/google/uuid v1.6.0          // Geração de UUIDs
-github.com/skip2/go-qrcode v0.0.0-...  // Geração de QR codes
-```
-
-## 🤝 Contribuindo
-
-Contribuições são bem-vindas! Por favor:
-
-1. Faça um fork do projeto
-2. Crie uma branch para sua feature (`git checkout -b feature/MinhaFeature`)
-3. Commit suas mudanças (`git commit -m 'Adiciona MinhaFeature'`)
-4. Push para a branch (`git push origin feature/MinhaFeature`)
-5. Abra um Pull Request
-
-### Diretrizes de Contribuição
-
-- Mantenha o código limpo e bem documentado
-- Siga as convenções de código Go
-- Adicione testes quando apropriado
-- Atualize a documentação conforme necessário
-
-## 📄 Licença
-
-Este projeto está sob a licença MIT. Veja o arquivo [LICENSE](LICENSE) para mais detalhes.
-
-## ❓ FAQ (Perguntas Frequentes)
-
-### 🔒 Segurança e Isolamento Multi Sessões
-
-#### O que mudou na versão 2.0?
-
-A partir da versão 2.0, implementamos isolamento completo por sessão. Cada `SESSION_KEY` funciona como um namespace isolado, garantindo que sessãos não vejam ou acessem dados de outros sessãos.
-
-#### Como funciona o isolamento de dados?
-
-- O `API_TOKEN` autentica o acesso ao sistema (compartilhado)
-- O `SESSION_KEY` identifica o sessão e isola seus dados (único por cliente)
-- Todas as queries são automaticamente filtradas por `sessão_id`
-- É impossível acessar dados de outros sessãos, mesmo tentando
-
-#### Posso ter vários clientes usando o mesmo sistema?
-
-Sim! Esse é exatamente o propósito do sistema multi sessões. Cada cliente recebe um `SESSION_KEY` único e só pode ver/gerenciar suas próprias sessões WhatsApp.
-
-#### E se eu esquecer de passar o SESSION_KEY?
-
-A API retornará `401 Unauthorized`. O header `SESSIONKEY` é **obrigatório** em todos os endpoints para garantir o isolamento de dados.
-
-#### Como migrar sessões existentes para o novo sistema?
-
-Execute a migração `003_add_sessão_id.sql` no banco de dados. Sessões antigas receberão `sessão_id = 'default'`. Use `SESSIONKEY: default` para acessá-las.
-
-### 📱 WhatsApp e Sessões
-
-#### Como adicionar múltiplas sessões WhatsApp?
-
-Use o endpoint `/api/v1/whatsapp/register` para cada nova sessão com um `session_key` único dentro do seu sessão.
-
-#### A sessão precisa ser reautenticada toda vez?
-
-Não. As sessões são persistidas no banco de dados e reconectam automaticamente.
-
-#### Quantas sessões posso ter por sessão?
-
-Não há limite técnico. Cada sessão pode ter quantas sessões WhatsApp quiser, limitado apenas pelos recursos do servidor.
-
-### 🚀 Produção e Infraestrutura
-
-#### Posso usar em produção?
-
-Sim! Recomendamos usar PostgreSQL e Docker para ambientes de produção.
-
-#### Como limitar o acesso por IP?
-
-Configure um reverse proxy (nginx, traefik) com regras de IP whitelisting.
-
-#### É possível enviar mensagens para grupos?
-
-Sim, use o JID do grupo no campo `number`. Exemplo: `123456789-1234567890@g.us`
-
-#### Como configurar PostgreSQL?
-
-Edite o `.env`:
-
-```env
-DB_DRIVER=postgres
-DB_DSN=postgres://user:password@localhost:5432/whatsapp_bot?sslmode=disable
-```
-
-Execute as migrações em `migrations/` no PostgreSQL antes de iniciar.
-
-## 🐛 Troubleshooting
-
-### Problema: QR Code não aparece
-
-**Solução:**
-
-- Verifique se `WHATSAPP_QR_GENERATE=true` está configurado
-- Acesse o endpoint `/api/v1/whatsapp/qrcode/{sessionKey}` diretamente
-
-### Problema: Sessão desconecta frequentemente
-
-**Solução:**
-
-- Verifique a conexão de internet
-- Certifique-se de que o celular está conectado
-- Aumente `WHATSAPP_RECONNECT_DELAY` no `.env`
-
-### Problema: Erro de autenticação
-
-**Solução:**
-
-- Verifique se `API_TOKEN` e `SESSION_KEY` estão corretos
-- Confirme os headers `apitoken` e `SESSIONKEY` na requisição
-
-### Problema: Falha ao enviar mídia
-
-**Solução:**
-
-- Verifique se a URL da mídia é acessível publicamente
-- Para Base64, verifique se o `mime_type` está correto
-- Confirme se o arquivo não excede `MAX_UPLOAD_SIZE`
-
-### Problema: Banco de dados bloqueado (SQLite)
-
-**Solução:**
-
-- Migre para PostgreSQL em produção
-- Ou aumente o timeout de lock no SQLite
-
-## 🆘 Suporte
-
-Se você encontrar problemas:
-
-1. **Verifique os logs:**
-
-   ```bash
-   docker-compose logs -f
-   ```
-
-2. **Teste o health check:**
-
-   ```bash
-   curl http://localhost:8080/health
-   ```
-
-## � Migração v1.x → v2.0
-
-Se você está atualizando de uma versão anterior, siga estes passos:
-
-### 1. Backup do Banco de Dados
-
-```bash
-# PostgreSQL
-pg_dump -h localhost -U usuario whatsapp_bot > backup_v1.sql
-
-# SQLite
-cp whatsapp.db whatsapp_v1_backup.db
-```
-
-### 2. Executar Migração
-
-```bash
-# PostgreSQL
-psql -h localhost -U usuario -d whatsapp_bot -f migrations/003_add_sessão_id.sql
-
-# SQLite
-sqlite3 whatsapp.db < migrations/003_add_sessão_id.sql
-```
-
-### 3. Atualizar Sessões Existentes
-
-Sessões antigas receberão `sessão_id = 'default'`. Para acessá-las:
-
-```bash
-curl http://localhost:8080/api/v1/whatsapp/sessions \
-  -H "apitoken: SEU_TOKEN" \
-  -H "SESSIONKEY: default"
-```
-
-### 4. Migrar Sessões para Novas Sessões (Opcional)
-
-Se você quer associar sessões antigas a sessões específicos:
-
-```sql
--- PostgreSQL/SQLite
-UPDATE whatsapp_sessions
-SET sessão_id = 'novo-sessão-id'
-WHERE whatsapp_session_key = 'sessao-especifica';
-```
-
-### 5. Atualizar Código do Cliente
-
-Certifique-se de que todas as requisições incluam o header `SESSIONKEY`:
-
-```javascript
-// ANTES (v1.x)
-fetch("/api/v1/whatsapp/sessions", {
-  headers: {
-    apitoken: "TOKEN",
-  },
-});
-
-// DEPOIS (v2.0)
-fetch("/api/v1/whatsapp/sessions", {
-  headers: {
-    apitoken: "TOKEN",
-    SESSIONKEY: "seu-sessao-id", // ← NOVO: Obrigatório
-  },
-});
-```
-
-## �📊 Status do Projeto
-
-![GitHub last commit](https://img.shields.io/github/last-commit/marcosoleniuk/api-bot-whats-golang)
-![GitHub issues](https://img.shields.io/github/issues/marcosoleniuk/api-bot-whats-golang)
-![GitHub stars](https://img.shields.io/github/stars/marcosoleniuk/api-bot-whats-golang)
-
----
-
-## 👨‍💻 Autor
-
-**Marcos Oleniuk**
-
-- 📧 Email: marcos@moleniuk.com
-- 💼 GitHub: [@marcosoleniuk](https://github.com/marcosoleniuk)
-- 💬 WhatsApp: [+55 44 98809-9508](https://wa.me/5544988099508)
-
----
-
-<div align="center">
-
-**⭐ Se este projeto foi útil, considere dar uma estrela!**
-
-Desenvolvido usando Golang
-
-</div>

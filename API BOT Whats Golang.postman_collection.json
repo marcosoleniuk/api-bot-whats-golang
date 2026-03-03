@@ -1,8 +1,8 @@
 {
   "info": {
-    "name": "WhatsApp Bot API Multi Sessões MOleniuk",
+    "name": "WhatsApp Bot API Multi Sessoes MOleniuk",
     "_postman_id": "9c5ad56a-2b7b-4f8f-9f06-8b8f7a5d65d1",
-    "description": "Collection com todos os endpoints da API incluindo persistência de mensagens, histórico e WebSocket em tempo real",
+    "description": "Collection atualizada com gerenciamento de sessoes, envio de mensagens, historico, webhooks, websocket e rotas legadas.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -11,32 +11,44 @@
       "value": "http://localhost:8080"
     },
     {
+      "key": "wsBaseUrl",
+      "value": "ws://localhost:8080"
+    },
+    {
       "key": "apiToken",
       "value": "seu-api-token"
     },
     {
       "key": "tenantSessionKey",
-      "value": "sua-session-key"
+      "value": "tenant-demo"
     },
     {
       "key": "waSessionKey",
       "value": "cliente-001"
     },
     {
-      "key": "webhookId",
-      "value": "webhook-id-uuid"
-    },
-    {
-      "key": "webhookUrl",
-      "value": "https://seu-servidor.com/webhook"
+      "key": "phoneNumber",
+      "value": "5511999999999"
     },
     {
       "key": "sessionID",
       "value": "uuid-da-sessao"
     },
     {
-      "key": "wsBaseUrl",
-      "value": "ws://localhost:8080"
+      "key": "messageID",
+      "value": "uuid-da-mensagem"
+    },
+    {
+      "key": "messageFilename",
+      "value": "media.bin"
+    },
+    {
+      "key": "webhookId",
+      "value": "uuid-do-webhook"
+    },
+    {
+      "key": "webhookUrl",
+      "value": "https://seu-servidor.com/webhook"
     },
     {
       "key": "wsScopes",
@@ -48,14 +60,15 @@
       "name": "Health",
       "request": {
         "method": "GET",
-        "url": "{{baseUrl}}/health"
+        "url": "{{baseUrl}}/health",
+        "description": "Health check sem autenticacao."
       }
     },
     {
-      "name": "Gerenciamento de Sessões",
+      "name": "Sessoes",
       "item": [
         {
-          "name": "Registrar sessão",
+          "name": "Registrar sessao",
           "request": {
             "method": "POST",
             "header": [
@@ -74,9 +87,10 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\"whatsappSessionKey\": \"{{waSessionKey}}\", \"nomePessoa\": \"João Silva\", \"emailPessoa\": \"joao@empresa.com\"}"
+              "raw": "{\n  \"whatsappSessionKey\": \"{{waSessionKey}}\",\n  \"nomePessoa\": \"Joao Silva\",\n  \"emailPessoa\": \"joao@empresa.com\"\n}"
             },
-            "url": "{{baseUrl}}/api/v1/whatsapp/register"
+            "url": "{{baseUrl}}/api/v1/whatsapp/register",
+            "description": "Cria ou recria uma sessao WhatsApp e retorna QR code ou status conectado."
           }
         },
         {
@@ -97,7 +111,7 @@
           }
         },
         {
-          "name": "Listar sessões",
+          "name": "Listar sessoes",
           "request": {
             "method": "GET",
             "header": [
@@ -114,7 +128,7 @@
           }
         },
         {
-          "name": "Desconectar sessão",
+          "name": "Desconectar sessao",
           "request": {
             "method": "POST",
             "header": [
@@ -131,7 +145,7 @@
           }
         },
         {
-          "name": "Deletar sessão",
+          "name": "Deletar sessao",
           "request": {
             "method": "DELETE",
             "header": [
@@ -162,10 +176,6 @@
                 "value": "{{apiToken}}"
               },
               {
-                "key": "SESSIONKEY",
-                "value": "{{tenantSessionKey}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
                 "value": "{{waSessionKey}}"
               },
@@ -176,14 +186,13 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\"number\": \"5511999999999\", \"text\": \"Olá!\"}"
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"text\": \"Ola!\"\n}"
             },
-            "url": "{{baseUrl}}/api/v1/messages/text",
-            "description": "Envia mensagem de texto e retorna messageID"
+            "url": "{{baseUrl}}/api/v1/messages/text"
           }
         },
         {
-          "name": "Enviar mídia (URL)",
+          "name": "Enviar midia por URL",
           "request": {
             "method": "POST",
             "header": [
@@ -192,10 +201,6 @@
                 "value": "{{apiToken}}"
               },
               {
-                "key": "SESSIONKEY",
-                "value": "{{tenantSessionKey}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
                 "value": "{{waSessionKey}}"
               },
@@ -206,14 +211,13 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\"number\": \"5511999999999\", \"caption\": \"Confira esta imagem\", \"media_url\": \"https://picsum.photos/800/600\"}"
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"caption\": \"Confira este arquivo\",\n  \"media_url\": \"https://picsum.photos/800/600\"\n}"
             },
-            "url": "{{baseUrl}}/api/v1/messages/media",
-            "description": "Envia mídia via URL e retorna messageID"
+            "url": "{{baseUrl}}/api/v1/messages/media"
           }
         },
         {
-          "name": "Enviar mídia (Base64)",
+          "name": "Enviar midia por Base64",
           "request": {
             "method": "POST",
             "header": [
@@ -222,10 +226,6 @@
                 "value": "{{apiToken}}"
               },
               {
-                "key": "SESSIONKEY",
-                "value": "{{tenantSessionKey}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
                 "value": "{{waSessionKey}}"
               },
@@ -236,14 +236,13 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\"number\": \"5511999999999\", \"caption\": \"Documento\", \"media_base64\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==\", \"mime_type\": \"image/png\"}"
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"caption\": \"Imagem em Base64\",\n  \"media_base64\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==\",\n  \"mime_type\": \"image/png\"\n}"
             },
-            "url": "{{baseUrl}}/api/v1/messages/media",
-            "description": "Envia mídia em base64 e retorna messageID"
+            "url": "{{baseUrl}}/api/v1/messages/media"
           }
         },
         {
-          "name": "Enviar áudio (URL)",
+          "name": "Enviar audio",
           "request": {
             "method": "POST",
             "header": [
@@ -252,10 +251,6 @@
                 "value": "{{apiToken}}"
               },
               {
-                "key": "SESSIONKEY",
-                "value": "{{tenantSessionKey}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
                 "value": "{{waSessionKey}}"
               },
@@ -266,14 +261,13 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\"number\":\"5511999999999\",\"media_url\":\"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3\",\"mime_type\":\"audio/mpeg\",\"ptt\":false}"
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"media_url\": \"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3\",\n  \"mime_type\": \"audio/mpeg\",\n  \"ptt\": false\n}"
             },
-            "url": "{{baseUrl}}/api/v1/messages/audio",
-            "description": "Envia áudio e retorna messageID"
+            "url": "{{baseUrl}}/api/v1/messages/audio"
           }
         },
         {
-          "name": "Enviar vídeo (URL)",
+          "name": "Enviar video",
           "request": {
             "method": "POST",
             "header": [
@@ -282,10 +276,6 @@
                 "value": "{{apiToken}}"
               },
               {
-                "key": "SESSIONKEY",
-                "value": "{{tenantSessionKey}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
                 "value": "{{waSessionKey}}"
               },
@@ -296,10 +286,9 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\"number\":\"5511999999999\",\"caption\":\"Vídeo de teste\",\"media_url\":\"https://samplelib.com/lib/preview/mp4/sample-5s.mp4\",\"mime_type\":\"video/mp4\",\"gif_playback\":false}"
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"caption\": \"Video de teste\",\n  \"media_url\": \"https://samplelib.com/lib/preview/mp4/sample-5s.mp4\",\n  \"mime_type\": \"video/mp4\",\n  \"gif_playback\": false\n}"
             },
-            "url": "{{baseUrl}}/api/v1/messages/video",
-            "description": "Envia vídeo e retorna messageID"
+            "url": "{{baseUrl}}/api/v1/messages/video"
           }
         },
         {
@@ -312,10 +301,6 @@
                 "value": "{{apiToken}}"
               },
               {
-                "key": "SESSIONKEY",
-                "value": "{{tenantSessionKey}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
                 "value": "{{waSessionKey}}"
               },
@@ -326,14 +311,13 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\"number\":\"5511999999999\",\"question\":\"Qual opção você prefere?\",\"options\":[\"Opção A\",\"Opção B\",\"Opção C\"],\"selectable_options_count\":1}"
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"question\": \"Qual opcao voce prefere?\",\n  \"options\": [\"Opcao A\", \"Opcao B\", \"Opcao C\"],\n  \"selectable_options_count\": 1\n}"
             },
-            "url": "{{baseUrl}}/api/v1/messages/poll",
-            "description": "Envia enquete e retorna messageID"
+            "url": "{{baseUrl}}/api/v1/messages/poll"
           }
         },
         {
-          "name": "Enviar evento (nativo vídeo)",
+          "name": "Enviar evento video",
           "request": {
             "method": "POST",
             "header": [
@@ -342,10 +326,6 @@
                 "value": "{{apiToken}}"
               },
               {
-                "key": "SESSIONKEY",
-                "value": "{{tenantSessionKey}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
                 "value": "{{waSessionKey}}"
               },
@@ -356,14 +336,13 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\"number\":\"5511999999999\",\"name\":\"Reunião semanal\",\"description\":\"Alinhamento de sprint\",\"join_link\":\"https://call.whatsapp.com/video/SEU_TOKEN_REAL_AQUI\",\"start_time\":\"2026-04-01T09:00:00\",\"end_time\":\"2026-04-01T10:00:00\",\"call_type\":\"video\",\"force_structured\":true,\"extra_guests_allowed\":true,\"is_schedule_call\":true,\"has_reminder\":true,\"reminder_offset_sec\":900}"
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"name\": \"Reuniao semanal\",\n  \"description\": \"Alinhamento de sprint\",\n  \"join_link\": \"https://call.whatsapp.com/video/SEU_TOKEN_REAL_AQUI\",\n  \"start_time\": \"2026-04-01T09:00:00\",\n  \"end_time\": \"2026-04-01T10:00:00\",\n  \"call_type\": \"video\",\n  \"force_structured\": true,\n  \"extra_guests_allowed\": true,\n  \"is_schedule_call\": true,\n  \"has_reminder\": true,\n  \"reminder_offset_sec\": 900\n}"
             },
-            "url": "{{baseUrl}}/api/v1/messages/event",
-            "description": "Envia evento nativo de vídeo e retorna messageID. Use join_link oficial call.whatsapp.com/video/... (não use links externos como meet.google.com)."
+            "url": "{{baseUrl}}/api/v1/messages/event"
           }
         },
         {
-          "name": "Enviar evento (nativo voz)",
+          "name": "Enviar evento voz",
           "request": {
             "method": "POST",
             "header": [
@@ -372,10 +351,6 @@
                 "value": "{{apiToken}}"
               },
               {
-                "key": "SESSIONKEY",
-                "value": "{{tenantSessionKey}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
                 "value": "{{waSessionKey}}"
               },
@@ -386,86 +361,32 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\"number\":\"5511999999999\",\"name\":\"Reunião de voz\",\"description\":\"Alinhamento por chamada de voz\",\"join_link\":\"https://call.whatsapp.com/voice/SEU_TOKEN_REAL_AQUI\",\"start_time\":\"2026-04-01T09:00:00\",\"end_time\":\"2026-04-01T10:00:00\",\"call_type\":\"voice\",\"force_structured\":true,\"extra_guests_allowed\":true,\"is_schedule_call\":true,\"has_reminder\":true,\"reminder_offset_sec\":900}"
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"name\": \"Reuniao de voz\",\n  \"description\": \"Alinhamento por chamada\",\n  \"join_link\": \"https://call.whatsapp.com/voice/SEU_TOKEN_REAL_AQUI\",\n  \"start_time\": \"2026-04-01T09:00:00\",\n  \"end_time\": \"2026-04-01T10:00:00\",\n  \"call_type\": \"voice\",\n  \"force_structured\": true,\n  \"extra_guests_allowed\": true,\n  \"is_schedule_call\": true,\n  \"has_reminder\": true,\n  \"reminder_offset_sec\": 900\n}"
             },
-            "url": "{{baseUrl}}/api/v1/messages/event",
-            "description": "Envia evento nativo de voz e retorna messageID. Use join_link oficial call.whatsapp.com/voice/..."
+            "url": "{{baseUrl}}/api/v1/messages/event"
           }
         }
       ]
     },
     {
-      "name": "Tempo Real (WebSocket)",
+      "name": "Historico da Sessao",
       "item": [
         {
-          "name": "Conectar WebSocket (sessão específica)",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{wsBaseUrl}}/api/v1/ws?apitoken={{apiToken}}&SESSIONKEY={{tenantSessionKey}}&whatsapp_session_key={{waSessionKey}}&scopes={{wsScopes}}",
-            "description": "Abre conexão WebSocket para eventos em tempo real. Eventos: ws.connected, session.connected, session.disconnected, session.logged_out, message.sent, message.received, message.receipt.\\n\\nNo Postman, use New -> WebSocket e cole a mesma URL (ou execute este request se sua versão suportar ws:// em collections)."
-          }
-        },
-        {
-          "name": "Conectar WebSocket (tenant)",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{wsBaseUrl}}/api/v1/ws?apitoken={{apiToken}}&SESSIONKEY={{tenantSessionKey}}",
-            "description": "Conexão WebSocket somente no escopo do tenant (SESSIONKEY). Recebe eventos globais do tenant."
-          }
-        }
-      ]
-    },
-    {
-      "name": "Histórico de Mensagens (Autenticado)",
-      "description": "Endpoints que usam Bearer Token + X-WhatsApp-Session-Key. Use Authorization: Bearer {{apiToken}} e X-WhatsApp-Session-Key: {{waSessionKey}}",
-      "item": [
-        {
-          "name": "Obter histórico de mensagens",
+          "name": "Listar historico",
           "request": {
             "method": "GET",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{apiToken}}"
+                "key": "apitoken",
+                "value": "{{apiToken}}"
               },
               {
                 "key": "X-WhatsApp-Session-Key",
                 "value": "{{waSessionKey}}"
               }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/messages/history?limit=50&offset=0",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "messages",
-                "history"
-              ],
-              "query": [
-                {
-                  "key": "limit",
-                  "value": "50",
-                  "description": "Número de mensagens (padrão: 50, máximo: 500)"
-                },
-                {
-                  "key": "offset",
-                  "value": "0",
-                  "description": "Deslocamento para paginação"
-                },
-                {
-                  "key": "contact_number",
-                  "value": "5511999999999",
-                  "description": "Opcional: filtrar por número de contato",
-                  "disabled": true
-                }
-              ]
-            },
-            "description": "Retorna histórico de mensagens da sessão autenticada com paginação"
+            "url": "{{baseUrl}}/api/v1/messages/history?limit=50&offset=0&include_media=false&contact=",
+            "description": "Use include_media=true para receber media_base64. O filtro correto e contact."
           }
         },
         {
@@ -474,44 +395,59 @@
             "method": "GET",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{apiToken}}"
+                "key": "apitoken",
+                "value": "{{apiToken}}"
               },
               {
                 "key": "X-WhatsApp-Session-Key",
                 "value": "{{waSessionKey}}"
               }
             ],
-            "url": "{{baseUrl}}/api/v1/messages/contacts",
-            "description": "Retorna lista de contatos únicos da sessão autenticada"
+            "url": "{{baseUrl}}/api/v1/messages/contacts"
           }
         },
         {
-          "name": "Obter estatísticas",
+          "name": "Obter estatisticas",
           "request": {
             "method": "GET",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{apiToken}}"
+                "key": "apitoken",
+                "value": "{{apiToken}}"
               },
               {
                 "key": "X-WhatsApp-Session-Key",
                 "value": "{{waSessionKey}}"
               }
             ],
-            "url": "{{baseUrl}}/api/v1/messages/stats",
-            "description": "Retorna estatísticas de mensagens (total, inbound, outbound, contatos)"
+            "url": "{{baseUrl}}/api/v1/messages/stats"
+          }
+        },
+        {
+          "name": "Baixar midia da mensagem",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/messages/{{messageID}}/media/{{messageFilename}}",
+            "description": "O filename pode ser qualquer nome com extensao; a API usa o messageID para localizar o anexo."
           }
         }
       ]
     },
     {
-      "name": "Histórico de Mensagens (Admin)",
-      "description": "Endpoints administrativos que usar apitoken + SESSIONKEY. Use apitoken: {{apiToken}} e SESSIONKEY: {{tenantSessionKey}}",
+      "name": "Conversas Administrativas",
       "item": [
         {
-          "name": "Obter histórico de específica sessão",
+          "name": "Historico por sessionID",
           "request": {
             "method": "GET",
             "header": [
@@ -524,39 +460,11 @@
                 "value": "{{tenantSessionKey}}"
               }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/conversations/{{sessionID}}?limit=50&offset=0",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "conversations",
-                "{{sessionID}}"
-              ],
-              "query": [
-                {
-                  "key": "limit",
-                  "value": "50"
-                },
-                {
-                  "key": "offset",
-                  "value": "0"
-                },
-                {
-                  "key": "contact_number",
-                  "value": "5511999999999",
-                  "description": "Opcional: filtrar por contato",
-                  "disabled": true
-                }
-              ]
-            },
-            "description": "Admin: Retorna histórico de mensagens de uma sessionID específica"
+            "url": "{{baseUrl}}/api/v1/conversations/{{sessionID}}?limit=50&offset=0&include_media=false&contact="
           }
         },
         {
-          "name": "Listar contatos de específica sessão",
+          "name": "Contatos por sessionID",
           "request": {
             "method": "GET",
             "header": [
@@ -569,12 +477,11 @@
                 "value": "{{tenantSessionKey}}"
               }
             ],
-            "url": "{{baseUrl}}/api/v1/conversations/{{sessionID}}/contacts",
-            "description": "Admin: Retorna lista de contatos únicos de uma sessionID específica"
+            "url": "{{baseUrl}}/api/v1/conversations/{{sessionID}}/contacts"
           }
         },
         {
-          "name": "Obter estatísticas de específica sessão",
+          "name": "Estatisticas por sessionID",
           "request": {
             "method": "GET",
             "header": [
@@ -587,8 +494,7 @@
                 "value": "{{tenantSessionKey}}"
               }
             ],
-            "url": "{{baseUrl}}/api/v1/conversations/{{sessionID}}/stats",
-            "description": "Admin: Retorna estatísticas de mensagens de uma sessionID específica"
+            "url": "{{baseUrl}}/api/v1/conversations/{{sessionID}}/stats"
           }
         }
       ]
@@ -602,8 +508,8 @@
             "method": "POST",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{apiToken}}"
+                "key": "apitoken",
+                "value": "{{apiToken}}"
               },
               {
                 "key": "X-WhatsApp-Session-Key",
@@ -616,10 +522,9 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\"url\": \"{{webhookUrl}}\", \"events\": [\"message.sent\", \"message.received\", \"message.read\"], \"headers\": {\"Authorization\": \"Bearer seu-token-custom\"}}"
+              "raw": "{\n  \"url\": \"{{webhookUrl}}\",\n  \"events\": [\"message.sent\", \"message.received\", \"message.read\"],\n  \"headers\": {\n    \"Authorization\": \"Bearer token-custom\"\n  }\n}"
             },
-            "url": "{{baseUrl}}/api/v1/webhooks",
-            "description": "Registra novo webhook com eventos: message.sent, message.received, message.read"
+            "url": "{{baseUrl}}/api/v1/webhooks"
           }
         },
         {
@@ -628,8 +533,8 @@
             "method": "GET",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{apiToken}}"
+                "key": "apitoken",
+                "value": "{{apiToken}}"
               },
               {
                 "key": "X-WhatsApp-Session-Key",
@@ -640,13 +545,13 @@
           }
         },
         {
-          "name": "Obter webhook específico",
+          "name": "Obter webhook",
           "request": {
             "method": "GET",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{apiToken}}"
+                "key": "apitoken",
+                "value": "{{apiToken}}"
               },
               {
                 "key": "X-WhatsApp-Session-Key",
@@ -662,8 +567,8 @@
             "method": "PUT",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{apiToken}}"
+                "key": "apitoken",
+                "value": "{{apiToken}}"
               },
               {
                 "key": "X-WhatsApp-Session-Key",
@@ -676,7 +581,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\"url\": \"https://novo-servidor.com/webhook\", \"events\": [\"message.sent\", \"message.received\", \"message.read\"], \"headers\": {\"Authorization\": \"Bearer novo-token\"}}"
+              "raw": "{\n  \"url\": \"https://novo-servidor.com/webhook\",\n  \"events\": [\"message.sent\", \"message.received\", \"message.read\"],\n  \"headers\": {\n    \"Authorization\": \"Bearer novo-token\"\n  }\n}"
             },
             "url": "{{baseUrl}}/api/v1/webhooks/{{webhookId}}"
           }
@@ -687,8 +592,8 @@
             "method": "DELETE",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{apiToken}}"
+                "key": "apitoken",
+                "value": "{{apiToken}}"
               },
               {
                 "key": "X-WhatsApp-Session-Key",
@@ -699,13 +604,13 @@
           }
         },
         {
-          "name": "Obter logs do webhook",
+          "name": "Logs do webhook",
           "request": {
             "method": "GET",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{apiToken}}"
+                "key": "apitoken",
+                "value": "{{apiToken}}"
               },
               {
                 "key": "X-WhatsApp-Session-Key",
@@ -713,6 +618,182 @@
               }
             ],
             "url": "{{baseUrl}}/api/v1/webhooks/{{webhookId}}/logs?limit=50"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tempo Real",
+      "item": [
+        {
+          "name": "WebSocket da sessao",
+          "request": {
+            "method": "GET",
+            "url": "{{wsBaseUrl}}/api/v1/ws?apitoken={{apiToken}}&session_key={{waSessionKey}}&whatsapp_session_key={{waSessionKey}}&scopes={{wsScopes}}",
+            "description": "Use no cliente WebSocket do Postman. Eventos: ws.connected, session.connected, session.disconnected, session.logged_out, message.sent, message.received, message.receipt."
+          }
+        },
+        {
+          "name": "WebSocket apenas pelo escopo principal",
+          "request": {
+            "method": "GET",
+            "url": "{{wsBaseUrl}}/api/v1/ws?apitoken={{apiToken}}&session_key={{waSessionKey}}",
+            "description": "Conexao simplificada usando somente o escopo principal da sessao."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Aliases Legados",
+      "item": [
+        {
+          "name": "sendText",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"text\": \"Ola pelo alias\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/sendText"
+          }
+        },
+        {
+          "name": "sendMedia",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"caption\": \"Arquivo via alias\",\n  \"media_url\": \"https://picsum.photos/800/600\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/sendMedia"
+          }
+        },
+        {
+          "name": "sendAudio",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"media_url\": \"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3\",\n  \"mime_type\": \"audio/mpeg\",\n  \"ptt\": false\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/sendAudio"
+          }
+        },
+        {
+          "name": "sendVideo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"caption\": \"Video via alias\",\n  \"media_url\": \"https://samplelib.com/lib/preview/mp4/sample-5s.mp4\",\n  \"mime_type\": \"video/mp4\",\n  \"gif_playback\": false\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/sendVideo"
+          }
+        },
+        {
+          "name": "sendPoll",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"question\": \"Enquete via alias\",\n  \"options\": [\"Sim\", \"Nao\"],\n  \"selectable_options_count\": 1\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/sendPoll"
+          }
+        },
+        {
+          "name": "sendEvent",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apitoken",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "X-WhatsApp-Session-Key",
+                "value": "{{waSessionKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"name\": \"Evento via alias\",\n  \"description\": \"Teste do alias legado\",\n  \"join_link\": \"https://call.whatsapp.com/video/SEU_TOKEN_REAL_AQUI\",\n  \"start_time\": \"2026-04-01T09:00:00\",\n  \"end_time\": \"2026-04-01T10:00:00\",\n  \"call_type\": \"video\",\n  \"force_structured\": true,\n  \"extra_guests_allowed\": true,\n  \"is_schedule_call\": true,\n  \"has_reminder\": true,\n  \"reminder_offset_sec\": 900\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/sendEvent"
           }
         }
       ]
