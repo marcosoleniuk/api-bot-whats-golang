@@ -19,6 +19,7 @@ import (
 type MultiTenantHandler struct {
 	whatsappService   *services.MultiTenantWhatsAppService
 	webhookService    *services.WebhookService
+	realtimeService   *services.RealtimeService
 	sessionRepository *repository.SessionRepository
 	messageService    *services.MessageService
 	config            *config.Config
@@ -37,6 +38,10 @@ func NewMultiTenantHandler(whatsappService *services.MultiTenantWhatsAppService,
 
 func (h *MultiTenantHandler) SetWebhookService(ws *services.WebhookService) {
 	h.webhookService = ws
+}
+
+func (h *MultiTenantHandler) SetRealtimeService(rs *services.RealtimeService) {
+	h.realtimeService = rs
 }
 
 func (h *MultiTenantHandler) SetSessionRepository(sr *repository.SessionRepository) {
@@ -132,7 +137,6 @@ func (h *MultiTenantHandler) SendTextMessage(w http.ResponseWriter, r *http.Requ
 		SentAt:    time.Now(),
 	}
 
-	// Salvar mensagem no banco de dados
 	if h.messageService != nil && h.sessionRepository != nil {
 		sessionID, err := h.sessionRepository.GetIDBySessionKey(sessionKey)
 		if err == nil {
@@ -141,10 +145,11 @@ func (h *MultiTenantHandler) SendTextMessage(w http.ResponseWriter, r *http.Requ
 			if errSave != nil {
 				h.logger.Warnf("[%s] Falha ao salvar mensagem no banco: %v", sessionKey, errSave)
 			}
+		} else {
+			h.logger.Warnf("[%s] Falha ao obter sessionID para salvar mensagem de texto: %v", sessionKey, err)
 		}
 	}
 
-	// Disparar webhooks para notificar sobre a mensagem enviada
 	if h.webhookService != nil && h.sessionRepository != nil {
 		sessionID, err := h.sessionRepository.GetIDBySessionKey(sessionKey)
 		if err == nil {
@@ -161,6 +166,14 @@ func (h *MultiTenantHandler) SendTextMessage(w http.ResponseWriter, r *http.Requ
 			h.logger.Warnf("[%s] Falha ao obter sessionID para webhooks: %v", sessionKey, err)
 		}
 	}
+
+	h.emitRealtimeEvent(r, sessionKey, "message.sent", &models.MessageWebhookData{
+		MessageID: messageID,
+		To:        req.Number,
+		Type:      "text",
+		Text:      req.Text,
+		Timestamp: messageSent.SentAt,
+	})
 
 	w.WriteHeader(http.StatusOK)
 	err = json.NewEncoder(w).Encode(models.NewSuccessResponse(
@@ -187,6 +200,8 @@ func (h *MultiTenantHandler) SendMediaMessage(w http.ResponseWriter, r *http.Req
 		}
 		return
 	}
+
+	h.extendWriteDeadlineForLongSend(w, sessionKey, "media")
 
 	var req models.MediaRequest
 
@@ -299,7 +314,6 @@ func (h *MultiTenantHandler) SendMediaMessage(w http.ResponseWriter, r *http.Req
 		SentAt:    time.Now(),
 	}
 
-	// Salvar mensagem de mídia no banco de dados
 	if h.messageService != nil && h.sessionRepository != nil {
 		sessionID, err := h.sessionRepository.GetIDBySessionKey(sessionKey)
 		if err == nil {
@@ -323,10 +337,11 @@ func (h *MultiTenantHandler) SendMediaMessage(w http.ResponseWriter, r *http.Req
 			if errSave != nil {
 				h.logger.Warnf("[%s] Falha ao salvar mensagem de mídia no banco: %v", sessionKey, errSave)
 			}
+		} else {
+			h.logger.Warnf("[%s] Falha ao obter sessionID para salvar mensagem de mídia: %v", sessionKey, err)
 		}
 	}
 
-	// Disparar webhooks para notificar sobre a mensagem de mídia enviada
 	if h.webhookService != nil && h.sessionRepository != nil {
 		sessionID, err := h.sessionRepository.GetIDBySessionKey(sessionKey)
 		if err == nil {
@@ -345,6 +360,16 @@ func (h *MultiTenantHandler) SendMediaMessage(w http.ResponseWriter, r *http.Req
 			h.logger.Warnf("[%s] Falha ao obter sessionID para webhooks: %v", sessionKey, err)
 		}
 	}
+
+	h.emitRealtimeEvent(r, sessionKey, "message.sent", &models.MessageWebhookData{
+		MessageID: messageID,
+		To:        req.Number,
+		Type:      messageType,
+		Caption:   req.Caption,
+		MediaURL:  req.MediaURL,
+		MimeType:  req.MimeType,
+		Timestamp: messageSent.SentAt,
+	})
 
 	w.WriteHeader(http.StatusOK)
 	err = json.NewEncoder(w).Encode(models.NewSuccessResponse(
@@ -371,6 +396,8 @@ func (h *MultiTenantHandler) SendAudioMessage(w http.ResponseWriter, r *http.Req
 		}
 		return
 	}
+
+	h.extendWriteDeadlineForLongSend(w, sessionKey, "audio")
 
 	var req models.AudioRequest
 	if err := validator.ValidateJSON(r, &req); err != nil {
@@ -464,46 +491,64 @@ func (h *MultiTenantHandler) SendAudioMessage(w http.ResponseWriter, r *http.Req
 		SentAt:    time.Now(),
 	}
 
-	if h.messageService != nil && h.sessionRepository != nil {
-		sessionID, err := h.sessionRepository.GetIDBySessionKey(sessionKey)
-		if err == nil {
-			tenantID := middleware.GetTenantID(r)
-			mediaURL := req.MediaURL
-			if mediaURL == "" {
-				mediaURL = "[base64-encoded]"
-			}
-			_, errSave := h.messageService.SaveMediaMessage(
-				sessionID,
-				tenantID,
-				messageID,
-				"outbound",
-				req.Number,
-				"audio",
-				mediaURL,
-				mediaBytes,
-				req.MimeType,
-				"",
-			)
-			if errSave != nil {
-				h.logger.Warnf("[%s] Falha ao salvar áudio no banco: %v", sessionKey, errSave)
-			}
+	if h.sessionRepository != nil && (h.messageService != nil || h.webhookService != nil) {
+		tenantID := middleware.GetTenantID(r)
+		mediaURL := req.MediaURL
+		if mediaURL == "" {
+			mediaURL = "[base64-encoded]"
 		}
+
+		mediaBytesToStore := mediaBytes
+
+		go func(
+			sessionKey, tenantID, messageID, number, mediaURL, mimeType string,
+			mediaBytesToStore []byte,
+			sentAt time.Time,
+		) {
+			sessionID, err := h.sessionRepository.GetIDBySessionKey(sessionKey)
+			if err != nil {
+				h.logger.Warnf("[%s] Falha ao obter sessionID para pós-processamento de áudio: %v", sessionKey, err)
+				return
+			}
+
+			if h.messageService != nil {
+				_, errSave := h.messageService.SaveMediaMessage(
+					sessionID,
+					tenantID,
+					messageID,
+					"outbound",
+					number,
+					"audio",
+					mediaURL,
+					mediaBytesToStore,
+					mimeType,
+					"",
+				)
+				if errSave != nil {
+					h.logger.Warnf("[%s] Falha ao salvar áudio no banco: %v", sessionKey, errSave)
+				}
+			}
+
+			if h.webhookService != nil {
+				webhookData := &models.MessageWebhookData{
+					MessageID: messageID,
+					To:        number,
+					Type:      "audio",
+					MimeType:  mimeType,
+					Timestamp: sentAt,
+				}
+				h.webhookService.TriggerWebhooks(sessionID, tenantID, "message.sent", webhookData, sessionKey)
+			}
+		}(sessionKey, tenantID, messageID, req.Number, mediaURL, req.MimeType, mediaBytesToStore, messageSent.SentAt)
 	}
 
-	if h.webhookService != nil && h.sessionRepository != nil {
-		sessionID, err := h.sessionRepository.GetIDBySessionKey(sessionKey)
-		if err == nil {
-			tenantID := middleware.GetTenantID(r)
-			webhookData := &models.MessageWebhookData{
-				MessageID: messageID,
-				To:        req.Number,
-				Type:      "audio",
-				MimeType:  req.MimeType,
-				Timestamp: messageSent.SentAt,
-			}
-			go h.webhookService.TriggerWebhooks(sessionID, tenantID, "message.sent", webhookData, sessionKey)
-		}
-	}
+	h.emitRealtimeEvent(r, sessionKey, "message.sent", &models.MessageWebhookData{
+		MessageID: messageID,
+		To:        req.Number,
+		Type:      "audio",
+		MimeType:  req.MimeType,
+		Timestamp: messageSent.SentAt,
+	})
 
 	w.WriteHeader(http.StatusOK)
 	err = json.NewEncoder(w).Encode(models.NewSuccessResponse(
@@ -530,6 +575,8 @@ func (h *MultiTenantHandler) SendVideoMessage(w http.ResponseWriter, r *http.Req
 		}
 		return
 	}
+
+	h.extendWriteDeadlineForLongSend(w, sessionKey, "video")
 
 	var req models.VideoRequest
 	if err := validator.ValidateJSON(r, &req); err != nil {
@@ -647,6 +694,8 @@ func (h *MultiTenantHandler) SendVideoMessage(w http.ResponseWriter, r *http.Req
 			if errSave != nil {
 				h.logger.Warnf("[%s] Falha ao salvar vídeo no banco: %v", sessionKey, errSave)
 			}
+		} else {
+			h.logger.Warnf("[%s] Falha ao obter sessionID para salvar vídeo no banco: %v", sessionKey, err)
 		}
 	}
 
@@ -665,6 +714,15 @@ func (h *MultiTenantHandler) SendVideoMessage(w http.ResponseWriter, r *http.Req
 			go h.webhookService.TriggerWebhooks(sessionID, tenantID, "message.sent", webhookData, sessionKey)
 		}
 	}
+
+	h.emitRealtimeEvent(r, sessionKey, "message.sent", &models.MessageWebhookData{
+		MessageID: messageID,
+		To:        req.Number,
+		Type:      "video",
+		Caption:   req.Caption,
+		MimeType:  req.MimeType,
+		Timestamp: messageSent.SentAt,
+	})
 
 	w.WriteHeader(http.StatusOK)
 	err = json.NewEncoder(w).Encode(models.NewSuccessResponse(
@@ -805,6 +863,8 @@ func (h *MultiTenantHandler) SendPollMessage(w http.ResponseWriter, r *http.Requ
 			if errSave != nil {
 				h.logger.Warnf("[%s] Falha ao salvar enquete no banco: %v", sessionKey, errSave)
 			}
+		} else {
+			h.logger.Warnf("[%s] Falha ao obter sessionID para salvar enquete no banco: %v", sessionKey, err)
 		}
 	}
 
@@ -822,6 +882,14 @@ func (h *MultiTenantHandler) SendPollMessage(w http.ResponseWriter, r *http.Requ
 			go h.webhookService.TriggerWebhooks(sessionID, tenantID, "message.sent", webhookData, sessionKey)
 		}
 	}
+
+	h.emitRealtimeEvent(r, sessionKey, "message.sent", &models.MessageWebhookData{
+		MessageID: messageID,
+		To:        req.Number,
+		Type:      "poll",
+		Text:      req.Question,
+		Timestamp: messageSent.SentAt,
+	})
 
 	w.WriteHeader(http.StatusOK)
 	err = json.NewEncoder(w).Encode(models.NewSuccessResponse(
@@ -848,6 +916,8 @@ func (h *MultiTenantHandler) SendEventMessage(w http.ResponseWriter, r *http.Req
 		}
 		return
 	}
+
+	h.extendWriteDeadlineForLongSend(w, sessionKey, "event")
 
 	var req models.EventRequest
 	if err := validator.ValidateJSON(r, &req); err != nil {
@@ -1042,6 +1112,8 @@ func (h *MultiTenantHandler) SendEventMessage(w http.ResponseWriter, r *http.Req
 			if errSave != nil {
 				h.logger.Warnf("[%s] Falha ao salvar evento no banco: %v", sessionKey, errSave)
 			}
+		} else {
+			h.logger.Warnf("[%s] Falha ao obter sessionID para salvar evento no banco: %v", sessionKey, err)
 		}
 	}
 
@@ -1060,6 +1132,14 @@ func (h *MultiTenantHandler) SendEventMessage(w http.ResponseWriter, r *http.Req
 		}
 	}
 
+	h.emitRealtimeEvent(r, sessionKey, "message.sent", &models.MessageWebhookData{
+		MessageID: messageID,
+		To:        req.Number,
+		Type:      "event",
+		Text:      strings.TrimSpace(req.Name),
+		Timestamp: messageSent.SentAt,
+	})
+
 	w.WriteHeader(http.StatusOK)
 	err = json.NewEncoder(w).Encode(models.NewSuccessResponse(
 		"Evento enviado com sucesso",
@@ -1076,13 +1156,12 @@ func parseDateTimeToUnix(input string) (int64, error) {
 		return 0, fmt.Errorf("valor vazio")
 	}
 
-	// Accept unix timestamps as string for backward compatibility.
 	if allDigits(value) {
 		ts, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
 			return 0, err
 		}
-		if ts > 9_999_999_999 { // milliseconds
+		if ts > 9_999_999_999 {
 			ts = ts / 1000
 		}
 		return ts, nil
@@ -1114,6 +1193,66 @@ func allDigits(s string) bool {
 		}
 	}
 	return len(s) > 0
+}
+
+func (h *MultiTenantHandler) emitRealtimeEvent(r *http.Request, sessionKey, event string, data interface{}) {
+	if h.realtimeService == nil {
+		return
+	}
+
+	requestTenant := strings.TrimSpace(middleware.GetTenantID(r))
+	resolvedTenant := requestTenant
+	scopes := []string{sessionKey, requestTenant}
+
+	if h.sessionRepository != nil && strings.TrimSpace(sessionKey) != "" {
+		session, err := h.sessionRepository.GetBySessionKey(sessionKey)
+		if err != nil {
+			h.logger.Warnf("[%s] Falha ao resolver escopos realtime: %v", sessionKey, err)
+		} else if session != nil {
+			resolvedTenant = firstNonEmpty(strings.TrimSpace(session.TenantID), resolvedTenant)
+			scopes = append(scopes, strings.TrimSpace(session.TenantID), strings.TrimSpace(session.WhatsAppSessionKey))
+		}
+	}
+
+	h.realtimeService.Publish(event, strings.TrimSpace(sessionKey), resolvedTenant, data, uniqueNonEmpty(scopes...)...)
+}
+
+func uniqueNonEmpty(values ...string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		v := strings.TrimSpace(value)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		v := strings.TrimSpace(value)
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func (h *MultiTenantHandler) extendWriteDeadlineForLongSend(w http.ResponseWriter, sessionKey, endpoint string) {
+	rc := http.NewResponseController(w)
+	if rc == nil {
+		return
+	}
+
+	if err := rc.SetWriteDeadline(time.Now().Add(10 * time.Minute)); err != nil {
+		h.logger.Warnf("[%s] Não foi possível estender write deadline do endpoint %s: %v", sessionKey, endpoint, err)
+	}
 }
 
 func (h *MultiTenantHandler) Health(w http.ResponseWriter, r *http.Request) {

@@ -250,7 +250,6 @@ func (r *WebhookRepository) UpdateLastTriggered(id uuid.UUID) error {
 	return nil
 }
 
-// WebhookLogRepository methods
 func (r *WebhookRepository) LogExecution(log *models.WebhookLog) error {
 	query := `
 		INSERT INTO webhook_logs (

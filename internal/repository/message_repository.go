@@ -23,9 +23,9 @@ func (r *MessageRepository) SaveMessage(msg *models.Message) error {
 		INSERT INTO messages (
 			id, session_id, tenant_id, whatsapp_message_id, direction,
 			sender, recipient, message_type, content, media_url,
-			mime_type, media_base64, status, created_at, updated_at
+			mime_type, status, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 		)
 		RETURNING id
 	`
@@ -43,7 +43,6 @@ func (r *MessageRepository) SaveMessage(msg *models.Message) error {
 		msg.Content,
 		msg.MediaURL,
 		msg.MimeType,
-		msg.MediaBase64Stored,
 		msg.Status,
 		msg.CreatedAt,
 		msg.UpdatedAt,
@@ -83,8 +82,7 @@ func (r *MessageRepository) UpdateMessageStatus(whatsappMessageID string, status
 func (r *MessageRepository) GetMessageByID(id uuid.UUID) (*models.Message, error) {
 	query := `
 		SELECT id, session_id, tenant_id, whatsapp_message_id, direction,
-		       sender, recipient, message_type, content, media_url, mime_type,
-		       media_base64, status, created_at, updated_at
+		       sender, recipient, message_type, content, media_url, mime_type, status, created_at, updated_at
 		FROM messages
 		WHERE id = $1
 	`
@@ -93,7 +91,7 @@ func (r *MessageRepository) GetMessageByID(id uuid.UUID) (*models.Message, error
 	err := r.db.QueryRow(query, id).Scan(
 		&msg.ID, &msg.SessionID, &msg.TenantID, &msg.WhatsAppMessageID,
 		&msg.Direction, &msg.Sender, &msg.Recipient, &msg.MessageType,
-		&msg.Content, &msg.MediaURL, &msg.MimeType, &msg.MediaBase64Stored, &msg.Status,
+		&msg.Content, &msg.MediaURL, &msg.MimeType, &msg.Status,
 		&msg.CreatedAt, &msg.UpdatedAt,
 	)
 
@@ -117,8 +115,7 @@ func (r *MessageRepository) GetConversation(sessionID uuid.UUID, contactNumber s
 
 	query := `
 		SELECT id, session_id, tenant_id, whatsapp_message_id, direction,
-		       sender, recipient, message_type, content, media_url, mime_type,
-		       media_base64, status, created_at, updated_at
+		       sender, recipient, message_type, content, media_url, mime_type, status, created_at, updated_at
 		FROM messages
 		WHERE session_id = $1
 	`
@@ -147,7 +144,7 @@ func (r *MessageRepository) GetConversation(sessionID uuid.UUID, contactNumber s
 		err := rows.Scan(
 			&msg.ID, &msg.SessionID, &msg.TenantID, &msg.WhatsAppMessageID,
 			&msg.Direction, &msg.Sender, &msg.Recipient, &msg.MessageType,
-			&msg.Content, &msg.MediaURL, &msg.MimeType, &msg.MediaBase64Stored, &msg.Status,
+			&msg.Content, &msg.MediaURL, &msg.MimeType, &msg.Status,
 			&msg.CreatedAt, &msg.UpdatedAt,
 		)
 		if err != nil {
@@ -184,8 +181,7 @@ func (r *MessageRepository) GetConversationCount(sessionID uuid.UUID, contactNum
 func (r *MessageRepository) GetMessagesByStatus(sessionID uuid.UUID, status string) ([]*models.Message, error) {
 	query := `
 		SELECT id, session_id, tenant_id, whatsapp_message_id, direction,
-		       sender, recipient, message_type, content, media_url, mime_type,
-		       media_base64, status, created_at, updated_at
+		       sender, recipient, message_type, content, media_url, mime_type, status, created_at, updated_at
 		FROM messages
 		WHERE session_id = $1 AND status = $2
 		ORDER BY created_at DESC
@@ -203,7 +199,7 @@ func (r *MessageRepository) GetMessagesByStatus(sessionID uuid.UUID, status stri
 		err := rows.Scan(
 			&msg.ID, &msg.SessionID, &msg.TenantID, &msg.WhatsAppMessageID,
 			&msg.Direction, &msg.Sender, &msg.Recipient, &msg.MessageType,
-			&msg.Content, &msg.MediaURL, &msg.MimeType, &msg.MediaBase64Stored, &msg.Status,
+			&msg.Content, &msg.MediaURL, &msg.MimeType, &msg.Status,
 			&msg.CreatedAt, &msg.UpdatedAt,
 		)
 		if err != nil {

@@ -173,15 +173,24 @@ type WebhookPayload struct {
 }
 
 type MessageWebhookData struct {
-	MessageID string    `json:"message_id,omitempty"`
-	From      string    `json:"from,omitempty"`
-	To        string    `json:"to,omitempty"`
-	Type      string    `json:"type"`
-	Text      string    `json:"text,omitempty"`
-	Caption   string    `json:"caption,omitempty"`
-	MediaURL  string    `json:"media_url,omitempty"`
-	MimeType  string    `json:"mime_type,omitempty"`
-	Timestamp time.Time `json:"timestamp"`
+	MessageID   string    `json:"message_id,omitempty"`
+	MessageIDs  []string  `json:"message_ids,omitempty"`
+	ReceiptType string    `json:"receipt_type,omitempty"`
+	Chat        string    `json:"chat,omitempty"`
+	IsGroup     *bool     `json:"is_group,omitempty"`
+	PollID      string    `json:"poll_id,omitempty"`
+	PollName    string    `json:"poll_name,omitempty"`
+	PollOptions []string  `json:"poll_options,omitempty"`
+	PollVotes   []string  `json:"poll_votes,omitempty"`
+	PollHashes  []string  `json:"poll_hashes,omitempty"`
+	From        string    `json:"from,omitempty"`
+	To          string    `json:"to,omitempty"`
+	Type        string    `json:"type"`
+	Text        string    `json:"text,omitempty"`
+	Caption     string    `json:"caption,omitempty"`
+	MediaURL    string    `json:"media_url,omitempty"`
+	MimeType    string    `json:"mime_type,omitempty"`
+	Timestamp   time.Time `json:"timestamp"`
 }
 
 type WebhookLog struct {
@@ -225,4 +234,16 @@ type MessageResponse struct {
 	MessageID string    `json:"message_id"`
 	Status    string    `json:"status"`
 	SentAt    time.Time `json:"sent_at"`
+}
+
+type PollMetadata struct {
+	ID            uuid.UUID `json:"id" db:"id"`
+	SessionID     uuid.UUID `json:"session_id" db:"session_id"`
+	TenantID      string    `json:"tenant_id" db:"tenant_id"`
+	ChatJID       string    `json:"chat_jid" db:"chat_jid"`
+	PollMessageID string    `json:"poll_message_id" db:"poll_message_id"`
+	Question      string    `json:"question" db:"question"`
+	Options       []string  `json:"options" db:"options"`
+	CreatedAt     time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at" db:"updated_at"`
 }

@@ -77,17 +77,24 @@ func main() {
 	webhookService := services.NewWebhookService(webhookRepo, log)
 	webhookHandler := handlers.NewWebhookHandler(webhookService, sessionRepo, log)
 
-	messageService := services.NewMessageService(messageRepo)
+	messageService := services.NewMessageService(messageRepo, log)
+	realtimeService := services.NewRealtimeService(log)
+	realtimeHandler := handlers.NewRealtimeHandler(realtimeService, log)
+	appCtx, appCancel := context.WithCancel(context.Background())
+	defer appCancel()
+	messageService.StartMediaCleanupJob(appCtx)
 	conversationHandler := handlers.NewConversationHandler(messageService, sessionRepo, log)
 
 	messageHandler.SetWebhookService(webhookService)
+	messageHandler.SetRealtimeService(realtimeService)
 	messageHandler.SetSessionRepository(sessionRepo)
 	messageHandler.SetMessageService(messageService)
 
 	whatsappService.SetWebhookService(webhookService)
 	whatsappService.SetMessageService(messageService)
+	whatsappService.SetRealtimeService(realtimeService)
 
-	router := setupRouter(messageHandler, sessionHandler, webhookHandler, conversationHandler, cfg, log)
+	router := setupRouter(messageHandler, sessionHandler, webhookHandler, conversationHandler, realtimeHandler, cfg, log)
 
 	server := &http.Server{
 		Addr:         ":" + cfg.Server.Port,
@@ -113,6 +120,7 @@ func main() {
 		log.Info("  POST /api/v1/messages/video - Enviar vídeo")
 		log.Info("  POST /api/v1/messages/poll - Enviar enquete")
 		log.Info("  POST /api/v1/messages/event - Enviar evento")
+		log.Info("  GET  /api/v1/ws - WebSocket de eventos em tempo real")
 		log.Info("  POST /api/v1/webhooks - Registrar novo webhook")
 		log.Info("  GET  /api/v1/webhooks - Listar webhooks")
 		log.Info("  GET  /api/v1/webhooks/{webhookId} - Obter webhook")
@@ -133,6 +141,7 @@ func main() {
 		}
 	case sig := <-shutdown:
 		log.Infof("Sinal de desligamento recebido: %v", sig)
+		appCancel()
 
 		ctx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
 		defer cancel()
@@ -152,7 +161,15 @@ func main() {
 	}
 }
 
-func setupRouter(mh *handlers.MultiTenantHandler, sh *handlers.SessionHandler, wh *handlers.WebhookHandler, ch *handlers.ConversationHandler, cfg *config.Config, log *logger.Logger) *mux.Router {
+func setupRouter(
+	mh *handlers.MultiTenantHandler,
+	sh *handlers.SessionHandler,
+	wh *handlers.WebhookHandler,
+	ch *handlers.ConversationHandler,
+	rh *handlers.RealtimeHandler,
+	cfg *config.Config,
+	log *logger.Logger,
+) *mux.Router {
 	r := mux.NewRouter()
 
 	r.HandleFunc("/health", mh.Health).Methods("GET")
@@ -176,6 +193,7 @@ func setupRouter(mh *handlers.MultiTenantHandler, sh *handlers.SessionHandler, w
 	api.HandleFunc("/messages/contacts", ch.GetContactsWithAuth).Methods("GET")
 	api.HandleFunc("/messages/stats", ch.GetStatsWithAuth).Methods("GET")
 	api.HandleFunc("/messages/{messageID}/media/{filename:.*}", ch.GetMessageMedia).Methods("GET")
+	api.HandleFunc("/ws", rh.Connect).Methods("GET")
 
 	api.HandleFunc("/conversations/{sessionID}", ch.GetConversation).Methods("GET")
 	api.HandleFunc("/conversations/{sessionID}/contacts", ch.GetContacts).Methods("GET")

@@ -28,10 +28,22 @@ func AuthMiddleware(cfg *config.Config, log *logger.Logger) func(http.Handler) h
 			} else {
 				apiToken = r.Header.Get("apitoken")
 			}
+			if apiToken == "" {
+				apiToken = r.URL.Query().Get("apitoken")
+			}
 
 			sessionKey := r.Header.Get("X-WhatsApp-Session-Key")
 			if sessionKey == "" {
 				sessionKey = r.Header.Get("SESSIONKEY")
+			}
+			if sessionKey == "" {
+				sessionKey = r.URL.Query().Get("X-WhatsApp-Session-Key")
+			}
+			if sessionKey == "" {
+				sessionKey = r.URL.Query().Get("SESSIONKEY")
+			}
+			if sessionKey == "" {
+				sessionKey = r.URL.Query().Get("session_key")
 			}
 
 			if apiToken != cfg.Auth.APIToken {
@@ -142,6 +154,10 @@ type responseWriter struct {
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+func (rw *responseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
 }
 
 func CORSMiddleware() func(http.Handler) http.Handler {

@@ -2,7 +2,7 @@
   "info": {
     "name": "WhatsApp Bot API Multi Sessões MOleniuk",
     "_postman_id": "9c5ad56a-2b7b-4f8f-9f06-8b8f7a5d65d1",
-    "description": "Collection com todos os endpoints da API incluindo persistência de mensagens e histórico",
+    "description": "Collection com todos os endpoints da API incluindo persistência de mensagens, histórico e WebSocket em tempo real",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -33,6 +33,14 @@
     {
       "key": "sessionID",
       "value": "uuid-da-sessao"
+    },
+    {
+      "key": "wsBaseUrl",
+      "value": "ws://localhost:8080"
+    },
+    {
+      "key": "wsScopes",
+      "value": "{{waSessionKey}}"
     }
   ],
   "item": [
@@ -387,6 +395,29 @@
       ]
     },
     {
+      "name": "Tempo Real (WebSocket)",
+      "item": [
+        {
+          "name": "Conectar WebSocket (sessão específica)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{wsBaseUrl}}/api/v1/ws?apitoken={{apiToken}}&SESSIONKEY={{tenantSessionKey}}&whatsapp_session_key={{waSessionKey}}&scopes={{wsScopes}}",
+            "description": "Abre conexão WebSocket para eventos em tempo real. Eventos: ws.connected, session.connected, session.disconnected, session.logged_out, message.sent, message.received, message.receipt.\\n\\nNo Postman, use New -> WebSocket e cole a mesma URL (ou execute este request se sua versão suportar ws:// em collections)."
+          }
+        },
+        {
+          "name": "Conectar WebSocket (tenant)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{wsBaseUrl}}/api/v1/ws?apitoken={{apiToken}}&SESSIONKEY={{tenantSessionKey}}",
+            "description": "Conexão WebSocket somente no escopo do tenant (SESSIONKEY). Recebe eventos globais do tenant."
+          }
+        }
+      ]
+    },
+    {
       "name": "Histórico de Mensagens (Autenticado)",
       "description": "Endpoints que usam Bearer Token + X-WhatsApp-Session-Key. Use Authorization: Bearer {{apiToken}} e X-WhatsApp-Session-Key: {{waSessionKey}}",
       "item": [
@@ -688,4 +719,3 @@
     }
   ]
 }
-

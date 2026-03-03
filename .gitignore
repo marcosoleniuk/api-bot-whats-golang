@@ -20,3 +20,4 @@ build/
 coverage.txt
 coverage.html
 bot.db
+storage/media/

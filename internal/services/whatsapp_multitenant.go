@@ -6,8 +6,10 @@ import (
 	"boot-whatsapp-golang/internal/repository"
 	"boot-whatsapp-golang/pkg/logger"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"mime"
@@ -22,11 +24,14 @@ import (
 	"github.com/skip2/go-qrcode"
 	"go.mau.fi/util/random"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
+	"go.mau.fi/whatsmeow/util/gcmutil"
+	"go.mau.fi/whatsmeow/util/hkdfutil"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -129,23 +134,35 @@ func (cs *clientStore) Range(fn func(key string, v *WhatsAppClient)) {
 type MultiTenantWhatsAppService struct {
 	clients *clientStore
 
-	config         *config.Config
-	logger         *logger.Logger
-	repository     *repository.SessionRepository
-	container      *sqlstore.Container
-	webhookService *WebhookService
-	messageService *MessageService
+	config          *config.Config
+	logger          *logger.Logger
+	repository      *repository.SessionRepository
+	container       *sqlstore.Container
+	webhookService  *WebhookService
+	messageService  *MessageService
+	realtimeService *RealtimeService
+	pollRepo        *repository.PollMetadataRepository
 
 	httpClient *http.Client
 
 	pendingEventFallbackMu sync.Mutex
 	pendingEventFallback   map[string]pendingEventFallback
+
+	pollMetadataMu sync.RWMutex
+	pollMetadata   map[string]pollMetadata
 }
 
 type pendingEventFallback struct {
 	chat      types.JID
 	text      string
 	expiresAt time.Time
+}
+
+type pollMetadata struct {
+	question         string
+	options          []string
+	optionHashToName map[string]string
+	expiresAt        time.Time
 }
 
 func NewMultiTenantWhatsAppService(cfg *config.Config, db *sql.DB, log *logger.Logger) (*MultiTenantWhatsAppService, error) {
@@ -184,6 +201,8 @@ func NewMultiTenantWhatsAppService(cfg *config.Config, db *sql.DB, log *logger.L
 		container:            container,
 		httpClient:           httpClient,
 		pendingEventFallback: make(map[string]pendingEventFallback),
+		pollMetadata:         make(map[string]pollMetadata),
+		pollRepo:             repository.NewPollMetadataRepository(db, log),
 	}
 
 	if err := service.LoadExistingSessions(); err != nil {
@@ -199,6 +218,10 @@ func (s *MultiTenantWhatsAppService) SetWebhookService(ws *WebhookService) {
 
 func (s *MultiTenantWhatsAppService) SetMessageService(ms *MessageService) {
 	s.messageService = ms
+}
+
+func (s *MultiTenantWhatsAppService) SetRealtimeService(rs *RealtimeService) {
+	s.realtimeService = rs
 }
 
 func (s *MultiTenantWhatsAppService) LoadExistingSessions() error {
@@ -413,29 +436,52 @@ func (s *MultiTenantWhatsAppService) registerEventHandlers(client *whatsmeow.Cli
 				deviceJID = client.Store.ID.String()
 			}
 			_ = s.repository.UpdateStatus(session.ID, models.SessionStatusConnected, phoneNumber, deviceJID)
+			s.publishRealtimeEvent(session, "session.connected", map[string]interface{}{
+				"phone_number": phoneNumber,
+				"device_jid":   deviceJID,
+				"status":       models.SessionStatusConnected,
+			})
 
 		case *events.Disconnected:
 			_ = s.repository.UpdateStatus(session.ID, models.SessionStatusDisconnected, "", "")
+			s.publishRealtimeEvent(session, "session.disconnected", map[string]interface{}{
+				"status": models.SessionStatusDisconnected,
+			})
 
 		case *events.LoggedOut:
 			if client.Store != nil {
 				_ = client.Store.Delete(context.Background())
 			}
 			_ = s.repository.MarkLoggedOut(session.ID)
+			s.publishRealtimeEvent(session, "session.logged_out", map[string]interface{}{
+				"status": models.SessionStatusPending,
+			})
 
 		case *events.Receipt:
 			s.logger.Infof("[%s] Receipt event recebido: Type=%s, %+v", session.WhatsAppSessionKey, event.Type, event)
-			// Disparar webhook apenas para read receipts (quando a mensagem é realmente lida)
+			receiptMessageIDs := make([]string, 0, len(event.MessageIDs))
+			for _, msgID := range event.MessageIDs {
+				receiptMessageIDs = append(receiptMessageIDs, fmt.Sprintf("%v", msgID))
+			}
+			primaryMessageID := ""
+			if len(receiptMessageIDs) > 0 {
+				primaryMessageID = receiptMessageIDs[0]
+			}
+
 			if event.Type == "read" && s.webhookService != nil {
 				webhookData := &models.MessageWebhookData{
-					Type:      "receipt",
-					Text:      "Message read receipt",
-					Timestamp: time.Now(),
+					MessageID:   primaryMessageID,
+					MessageIDs:  receiptMessageIDs,
+					ReceiptType: string(event.Type),
+					Chat:        event.MessageSource.Chat.String(),
+					IsGroup:     proto.Bool(event.MessageSource.IsGroup),
+					From:        event.MessageSource.Sender.String(),
+					Type:        "receipt",
+					Text:        "Message read receipt",
+					Timestamp:   time.Now(),
 				}
-				// Usar sessionKey como tenantID para manter consistência com message.sent
 				go s.webhookService.TriggerWebhooks(session.ID, session.WhatsAppSessionKey, "message.read", webhookData, session.WhatsAppSessionKey)
 			}
-			// Atualizar status de mensagens no banco baseado em recibos
 			if s.messageService != nil && len(event.MessageIDs) > 0 {
 				for _, msgID := range event.MessageIDs {
 					status := "sent"
@@ -458,16 +504,38 @@ func (s *MultiTenantWhatsAppService) registerEventHandlers(client *whatsmeow.Cli
 				}
 			}
 
+			s.publishRealtimeEvent(session, "message.receipt", map[string]interface{}{
+				"type":        event.Type,
+				"message_id":  primaryMessageID,
+				"message_ids": receiptMessageIDs,
+				"chat":        event.MessageSource.Chat.String(),
+				"sender":      event.MessageSource.Sender.String(),
+				"is_from_me":  event.MessageSource.IsFromMe,
+				"is_group":    event.MessageSource.IsGroup,
+				"timestamp":   event.Timestamp,
+			})
+
 		case *events.Message:
-			// Extrair conteúdo e tipo da mensagem
+			if s.handlePollVoteIfPresent(client, session, event) {
+				return
+			}
+
 			var messageType string
 			var messageContent string
 			var mediaURL string
 			var mimeType string
 			var mediaBytes []byte
+			var pollQuestion string
+			var pollOptions []string
 
 			if msg := event.Message; msg != nil {
-				if msg.GetConversation() != "" {
+				if pollMsg := extractPollCreationMessage(msg); pollMsg != nil {
+					messageType = "poll"
+					pollQuestion = strings.TrimSpace(pollMsg.GetName())
+					messageContent = pollQuestion
+					pollOptions = extractPollOptionNames(pollMsg)
+					s.setPollMetadataForSession(session, session.WhatsAppSessionKey, event.Info.Chat, event.Info.ID, pollQuestion, pollOptions)
+				} else if msg.GetConversation() != "" {
 					messageType = "text"
 					messageContent = msg.GetConversation()
 				} else if extMsg := msg.GetExtendedTextMessage(); extMsg != nil {
@@ -511,20 +579,16 @@ func (s *MultiTenantWhatsAppService) registerEventHandlers(client *whatsmeow.Cli
 				}
 			}
 
-			// Ignorar mensagens vazias/sem conteúdo (receipts disfarçados)
 			if messageType == "" {
 				return
 			}
 
 			s.logger.Infof("[%s] Message event recebido de %s (type=%s)", session.WhatsAppSessionKey, event.Info.Sender, messageType)
+			messageID := event.Info.ID
+			sender := event.Info.Sender.String()
 
-			// Salvar mensagem recebida no banco de dados
 			if s.messageService != nil {
-				messageID := event.Info.ID
-				sender := event.Info.Sender.String()
-
 				var err error
-				// Usar SaveMediaMessage se houver mídia, caso contrário SaveInboundMessage
 				if mediaURL != "" {
 					if downloaded, dlErr := s.downloadInboundMedia(client, event.Message); dlErr != nil {
 						s.logger.Warnf("[%s] Falha ao baixar/decriptar mídia %s: %v", session.WhatsAppSessionKey, messageID, dlErr)
@@ -560,23 +624,398 @@ func (s *MultiTenantWhatsAppService) registerEventHandlers(client *whatsmeow.Cli
 					s.logger.Warnf("[%s] Falha ao salvar mensagem recebida: %v", session.WhatsAppSessionKey, err)
 				}
 
-				// Disparar webhook para mensagens recebidas
 				if s.webhookService != nil {
 					webhookData := &models.MessageWebhookData{
 						MessageID: messageID,
+						Chat:      event.Info.Chat.String(),
+						IsGroup:   proto.Bool(event.Info.IsGroup),
 						From:      sender,
 						Type:      messageType,
 						Text:      messageContent,
 						Timestamp: time.Now(),
 					}
+					if messageType == "poll" {
+						webhookData.PollID = messageID
+						webhookData.PollName = pollQuestion
+						webhookData.PollOptions = append([]string(nil), pollOptions...)
+					}
 					go s.webhookService.TriggerWebhooks(session.ID, session.WhatsAppSessionKey, "message.received", webhookData, session.WhatsAppSessionKey)
 				}
 			}
+
+			realtimeData := &models.MessageWebhookData{
+				MessageID: messageID,
+				Chat:      event.Info.Chat.String(),
+				IsGroup:   proto.Bool(event.Info.IsGroup),
+				From:      sender,
+				Type:      messageType,
+				Text:      messageContent,
+				MediaURL:  mediaURL,
+				MimeType:  mimeType,
+				Timestamp: time.Now(),
+			}
+			if messageType == "poll" {
+				realtimeData.PollID = messageID
+				realtimeData.PollName = pollQuestion
+				realtimeData.PollOptions = append([]string(nil), pollOptions...)
+			}
+			s.publishRealtimeEvent(session, "message.received", realtimeData)
 
 		default:
 			s.logger.Infof("[%s] Evento desconhecido recebido: %T", session.WhatsAppSessionKey, evt)
 		}
 	})
+}
+
+func (s *MultiTenantWhatsAppService) handlePollVoteIfPresent(client *whatsmeow.Client, session *models.WhatsAppSession, event *events.Message) bool {
+	if client == nil || session == nil || event == nil || event.Message == nil {
+		return false
+	}
+
+	pollUpdate := event.Message.GetPollUpdateMessage()
+	if pollUpdate == nil {
+		return false
+	}
+
+	pollID := ""
+	pollChat := event.Info.Chat
+	pollKey := pollUpdate.GetPollCreationMessageKey()
+	if pollKey != nil {
+		pollID = strings.TrimSpace(pollKey.GetID())
+		if remoteJID := strings.TrimSpace(pollKey.GetRemoteJID()); remoteJID != "" {
+			if parsed, err := types.ParseJID(remoteJID); err == nil {
+				pollChat = parsed
+			}
+		}
+	}
+
+	var selectedOptions []string
+	var selectedHashes []string
+	var pollName string
+
+	pollVote, err := s.decryptPollVoteWithFallback(client, event, pollID, pollChat)
+	if err != nil {
+		s.logger.Warnf("[%s] Falha ao decriptar voto de enquete %s: %v", session.WhatsAppSessionKey, event.Info.ID, err)
+	} else {
+		selectedOptions, selectedHashes, pollName = s.resolvePollVote(session, pollChat, pollID, pollVote.GetSelectedOptions())
+	}
+
+	meta, hasMeta := s.getPollMetadata(session.WhatsAppSessionKey, pollChat, pollID)
+	if pollName == "" && hasMeta {
+		pollName = meta.question
+	}
+
+	voteText := "Poll vote update"
+	if len(selectedOptions) > 0 {
+		voteText = fmt.Sprintf("Poll vote: %s", strings.Join(selectedOptions, ", "))
+	} else if len(selectedHashes) > 0 {
+		voteText = fmt.Sprintf("Poll vote hashes: %s", strings.Join(selectedHashes, ", "))
+	}
+
+	if s.messageService != nil {
+		_, saveErr := s.messageService.SaveInboundMessage(
+			session.ID,
+			session.WhatsAppSessionKey,
+			event.Info.ID,
+			event.Info.Sender.String(),
+			voteText,
+			"unknown",
+		)
+		if saveErr != nil {
+			s.logger.Warnf("[%s] Falha ao salvar voto de enquete no banco: %v", session.WhatsAppSessionKey, saveErr)
+		}
+	}
+
+	webhookData := &models.MessageWebhookData{
+		MessageID: event.Info.ID,
+		Chat:      event.Info.Chat.String(),
+		IsGroup:   proto.Bool(event.Info.IsGroup),
+		PollID:    pollID,
+		PollName:  pollName,
+		PollVotes: append([]string(nil), selectedOptions...),
+		PollHashes: append([]string(nil),
+			selectedHashes...),
+		From:      event.Info.Sender.String(),
+		Type:      "poll_vote",
+		Text:      voteText,
+		Timestamp: time.Now(),
+	}
+	if hasMeta {
+		webhookData.PollOptions = append([]string(nil), meta.options...)
+	}
+
+	if s.webhookService != nil {
+		go s.webhookService.TriggerWebhooks(session.ID, session.WhatsAppSessionKey, "message.received", webhookData, session.WhatsAppSessionKey)
+	}
+	s.publishRealtimeEvent(session, "message.received", webhookData)
+	return true
+}
+
+func (s *MultiTenantWhatsAppService) decryptPollVoteWithFallback(client *whatsmeow.Client, event *events.Message, pollID string, pollChat types.JID) (*waE2E.PollVoteMessage, error) {
+	if client == nil || event == nil || event.Message == nil {
+		return nil, fmt.Errorf("evento de voto inválido")
+	}
+
+	decryptCtx, cancelDecrypt := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelDecrypt()
+
+	pollVote, err := client.DecryptPollVote(decryptCtx, event)
+	if err == nil {
+		return pollVote, nil
+	}
+
+	pollID = strings.TrimSpace(pollID)
+	pollUpdate := event.Message.GetPollUpdateMessage()
+	if pollID == "" || pollUpdate == nil || pollUpdate.GetVote() == nil {
+		return nil, err
+	}
+
+	candidateChats := s.buildPollChatCandidates(decryptCtx, client, event, pollChat, pollUpdate.GetPollCreationMessageKey())
+	candidateSenders := s.buildPollSenderCandidates(decryptCtx, client, event, pollUpdate.GetPollCreationMessageKey())
+	candidateModificationSenders := s.buildPollModificationSenderCandidates(decryptCtx, client, event, pollUpdate.GetPollCreationMessageKey())
+	candidatePollIDs := buildPollIDCandidates(pollID, pollUpdate.GetPollCreationMessageKey(), event)
+
+	vote := pollUpdate.GetVote()
+	tried := 0
+	for _, chatCandidate := range candidateChats {
+		for _, senderCandidate := range candidateSenders {
+			for _, pollIDCandidate := range candidatePollIDs {
+				if decryptCtx.Err() != nil {
+					return nil, fmt.Errorf("%w (fallback interrompido: %v)", err, decryptCtx.Err())
+				}
+
+				secret, realSender, getSecretErr := client.Store.MsgSecrets.GetMessageSecret(decryptCtx, chatCandidate, senderCandidate, pollIDCandidate)
+				if getSecretErr != nil || len(secret) == 0 {
+					continue
+				}
+
+				originalSenderCandidates := s.buildPollOriginalSenderCandidates(decryptCtx, client, realSender, senderCandidate)
+				for _, originalSender := range originalSenderCandidates {
+					for _, modificationSender := range candidateModificationSenders {
+						tried++
+						decryptedVote, decryptErr := decryptPollVoteWithSecret(
+							secret,
+							originalSender,
+							modificationSender,
+							pollIDCandidate,
+							vote.GetEncPayload(),
+							vote.GetEncIV(),
+						)
+						if decryptErr != nil {
+							continue
+						}
+						return decryptedVote, nil
+					}
+				}
+			}
+		}
+	}
+
+	if tried == 0 {
+		return nil, fmt.Errorf("%w (nenhum segredo compatível encontrado para fallback)", err)
+	}
+	return nil, fmt.Errorf(
+		"%w (fallback testou %d combinação(ões) sem sucesso; chats=%d, senders=%d, mod_senders=%d, poll_ids=%d)",
+		err,
+		tried,
+		len(candidateChats),
+		len(candidateSenders),
+		len(candidateModificationSenders),
+		len(candidatePollIDs),
+	)
+}
+
+func decryptPollVoteWithSecret(baseSecret []byte, originalSender, modificationSender types.JID, pollID string, encPayload, encIV []byte) (*waE2E.PollVoteMessage, error) {
+	if len(baseSecret) == 0 {
+		return nil, fmt.Errorf("segredo base vazio")
+	}
+	if strings.TrimSpace(pollID) == "" {
+		return nil, fmt.Errorf("pollID vazio")
+	}
+
+	origSenderStr := originalSender.ToNonAD().String()
+	modSenderStr := modificationSender.ToNonAD().String()
+
+	useCaseSecret := make([]byte, 0, len(pollID)+len(origSenderStr)+len(modSenderStr)+len("Poll Vote"))
+	useCaseSecret = append(useCaseSecret, pollID...)
+	useCaseSecret = append(useCaseSecret, origSenderStr...)
+	useCaseSecret = append(useCaseSecret, modSenderStr...)
+	useCaseSecret = append(useCaseSecret, "Poll Vote"...)
+
+	secretKey := hkdfutil.SHA256(baseSecret, nil, useCaseSecret, 32)
+	additionalData := fmt.Appendf(nil, "%s\x00%s", pollID, modSenderStr)
+
+	plaintext, err := gcmutil.Decrypt(secretKey, encIV, encPayload, additionalData)
+	if err != nil {
+		return nil, err
+	}
+
+	var vote waE2E.PollVoteMessage
+	if err := proto.Unmarshal(plaintext, &vote); err != nil {
+		return nil, fmt.Errorf("falha ao decodificar voto de enquete: %w", err)
+	}
+	return &vote, nil
+}
+
+func (s *MultiTenantWhatsAppService) buildPollChatCandidates(ctx context.Context, client *whatsmeow.Client, event *events.Message, pollChat types.JID, key *waCommon.MessageKey) []types.JID {
+	seen := make(map[string]struct{}, 8)
+	candidates := make([]types.JID, 0, 8)
+
+	candidates = addJIDCandidate(candidates, seen, event.Info.Chat)
+	candidates = addJIDCandidate(candidates, seen, pollChat)
+	if key != nil {
+		if parsed, parseErr := types.ParseJID(strings.TrimSpace(key.GetRemoteJID())); parseErr == nil {
+			candidates = addJIDCandidate(candidates, seen, parsed)
+		}
+	}
+
+	baseLen := len(candidates)
+	for i := 0; i < baseLen; i++ {
+		alt, altErr := client.Store.GetAltJID(ctx, candidates[i])
+		if altErr == nil {
+			candidates = addJIDCandidate(candidates, seen, alt)
+		}
+	}
+
+	return candidates
+}
+
+func (s *MultiTenantWhatsAppService) buildPollSenderCandidates(ctx context.Context, client *whatsmeow.Client, event *events.Message, key *waCommon.MessageKey) []types.JID {
+	seen := make(map[string]struct{}, 12)
+	candidates := make([]types.JID, 0, 12)
+
+	candidates = addJIDCandidate(candidates, seen, event.Info.Sender)
+	candidates = addJIDCandidate(candidates, seen, event.Info.SenderAlt)
+	candidates = addJIDCandidate(candidates, seen, event.Info.Chat)
+	candidates = addJIDCandidate(candidates, seen, client.Store.GetJID())
+	candidates = addJIDCandidate(candidates, seen, client.Store.GetLID())
+
+	if key != nil {
+		if parsed, parseErr := types.ParseJID(strings.TrimSpace(key.GetParticipant())); parseErr == nil {
+			candidates = addJIDCandidate(candidates, seen, parsed)
+		}
+		if parsed, parseErr := types.ParseJID(strings.TrimSpace(key.GetRemoteJID())); parseErr == nil {
+			candidates = addJIDCandidate(candidates, seen, parsed)
+		}
+	}
+
+	baseLen := len(candidates)
+	for i := 0; i < baseLen; i++ {
+		alt, altErr := client.Store.GetAltJID(ctx, candidates[i])
+		if altErr == nil {
+			candidates = addJIDCandidate(candidates, seen, alt)
+		}
+	}
+
+	return candidates
+}
+
+func (s *MultiTenantWhatsAppService) buildPollModificationSenderCandidates(ctx context.Context, client *whatsmeow.Client, event *events.Message, key *waCommon.MessageKey) []types.JID {
+	seen := make(map[string]struct{}, 12)
+	candidates := make([]types.JID, 0, 12)
+
+	candidates = addJIDCandidate(candidates, seen, event.Info.Sender)
+	candidates = addJIDCandidate(candidates, seen, event.Info.SenderAlt)
+	candidates = addJIDCandidate(candidates, seen, event.Info.Chat)
+
+	if key != nil {
+		if parsed, parseErr := types.ParseJID(strings.TrimSpace(key.GetParticipant())); parseErr == nil {
+			candidates = addJIDCandidate(candidates, seen, parsed)
+		}
+		if parsed, parseErr := types.ParseJID(strings.TrimSpace(key.GetRemoteJID())); parseErr == nil {
+			candidates = addJIDCandidate(candidates, seen, parsed)
+		}
+	}
+
+	baseLen := len(candidates)
+	for i := 0; i < baseLen; i++ {
+		alt, altErr := client.Store.GetAltJID(ctx, candidates[i])
+		if altErr == nil {
+			candidates = addJIDCandidate(candidates, seen, alt)
+		}
+	}
+
+	return candidates
+}
+
+func (s *MultiTenantWhatsAppService) buildPollOriginalSenderCandidates(ctx context.Context, client *whatsmeow.Client, realSender, requestedSender types.JID) []types.JID {
+	seen := make(map[string]struct{}, 8)
+	candidates := make([]types.JID, 0, 8)
+
+	candidates = addJIDCandidate(candidates, seen, realSender)
+	candidates = addJIDCandidate(candidates, seen, requestedSender)
+
+	baseLen := len(candidates)
+	for i := 0; i < baseLen; i++ {
+		alt, altErr := client.Store.GetAltJID(ctx, candidates[i])
+		if altErr == nil {
+			candidates = addJIDCandidate(candidates, seen, alt)
+		}
+	}
+
+	return candidates
+}
+
+func buildPollIDCandidates(primaryPollID string, key *waCommon.MessageKey, event *events.Message) []string {
+	seen := make(map[string]struct{}, 4)
+	candidates := make([]string, 0, 4)
+
+	add := func(value string) {
+		v := strings.TrimSpace(value)
+		if v == "" {
+			return
+		}
+		if _, exists := seen[v]; exists {
+			return
+		}
+		seen[v] = struct{}{}
+		candidates = append(candidates, v)
+	}
+
+	add(primaryPollID)
+	if key != nil {
+		add(key.GetID())
+	}
+	if event != nil {
+		add(string(event.Info.MsgMetaInfo.TargetID))
+		add(event.Info.ID)
+	}
+
+	return candidates
+}
+
+func addJIDCandidate(candidates []types.JID, seen map[string]struct{}, jid types.JID) []types.JID {
+	if jid.IsEmpty() {
+		return candidates
+	}
+	normalized := jid.ToNonAD()
+	key := strings.TrimSpace(normalized.String())
+	if key == "" {
+		return candidates
+	}
+	if _, exists := seen[key]; exists {
+		return candidates
+	}
+	seen[key] = struct{}{}
+	return append(candidates, normalized)
+}
+
+func (s *MultiTenantWhatsAppService) publishRealtimeEvent(session *models.WhatsAppSession, eventType string, data interface{}) {
+	if s.realtimeService == nil || session == nil {
+		return
+	}
+
+	sessionKey := strings.TrimSpace(session.WhatsAppSessionKey)
+	tenantID := strings.TrimSpace(session.TenantID)
+
+	s.realtimeService.Publish(
+		eventType,
+		sessionKey,
+		tenantID,
+		data,
+		sessionKey,
+		tenantID,
+	)
 }
 
 func (s *MultiTenantWhatsAppService) downloadInboundMedia(client *whatsmeow.Client, msg *waE2E.Message) ([]byte, error) {
@@ -832,6 +1271,7 @@ func (s *MultiTenantWhatsAppService) SendAudioMessage(sessionKey, number, mediaU
 		return "", "", nil, err
 	}
 
+	prepareStartedAt := time.Now()
 	mediaData, contentType, _, err := s.prepareMedia(mediaURL, mediaBase64, mimeType)
 	if err != nil {
 		return "", "", nil, err
@@ -840,14 +1280,17 @@ func (s *MultiTenantWhatsAppService) SendAudioMessage(sessionKey, number, mediaU
 	if contentType == "" {
 		contentType = "audio/mpeg"
 	}
+	s.logger.Infof("[%s] Áudio preparado (bytes=%d, mime=%s) em %v", sessionKey, len(mediaData), contentType, time.Since(prepareStartedAt))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
+	uploadStartedAt := time.Now()
 	uploaded, err := client.Upload(ctx, mediaData, whatsmeow.MediaAudio)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("falha ao fazer upload do áudio: %w", err)
 	}
+	s.logger.Infof("[%s] Upload de áudio concluído em %v", sessionKey, time.Since(uploadStartedAt))
 
 	msg := &waE2E.Message{
 		AudioMessage: &waE2E.AudioMessage{
@@ -862,10 +1305,12 @@ func (s *MultiTenantWhatsAppService) SendAudioMessage(sessionKey, number, mediaU
 		},
 	}
 
+	sendStartedAt := time.Now()
 	resp, err := client.SendMessage(ctx, jid, msg)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("falha ao enviar áudio: %w", err)
 	}
+	s.logger.Infof("[%s] SendMessage de áudio concluído em %v (id=%s)", sessionKey, time.Since(sendStartedAt), resp.ID)
 
 	messageID := resp.ID
 	if messageID == "" {
@@ -955,6 +1400,7 @@ func (s *MultiTenantWhatsAppService) SendPollMessage(sessionKey, number, questio
 	if messageID == "" {
 		messageID = "unknown"
 	}
+	s.setPollMetadata(sessionKey, jid, messageID, question, options)
 
 	return messageID, nil
 }
@@ -1035,7 +1481,6 @@ func (s *MultiTenantWhatsAppService) SendEventMessage(
 			return "", fmt.Errorf("call_type inválido: %s", callType)
 		}
 
-		// To match the native card, prefer official WhatsApp call links when call_type is requested.
 		if finalJoinLink == "" || !isWhatsAppCallLink(finalJoinLink) {
 			linkCtx, linkCancel := context.WithTimeout(context.Background(), 25*time.Second)
 			token, linkErr := client.CreateCallLink(linkCtx, mediaType, time.Unix(startTime, 0))
@@ -1193,6 +1638,225 @@ func (s *MultiTenantWhatsAppService) popPendingEventFallback(messageID string) (
 	return pending, true
 }
 
+func extractPollCreationMessage(msg *waE2E.Message) *waE2E.PollCreationMessage {
+	if msg == nil {
+		return nil
+	}
+	if poll := msg.GetPollCreationMessage(); poll != nil {
+		return poll
+	}
+	if poll := msg.GetPollCreationMessageV2(); poll != nil {
+		return poll
+	}
+	if poll := msg.GetPollCreationMessageV3(); poll != nil {
+		return poll
+	}
+	if poll := msg.GetPollCreationMessageV5(); poll != nil {
+		return poll
+	}
+	if fp := msg.GetPollCreationMessageV4(); fp != nil && fp.GetMessage() != nil {
+		return extractPollCreationMessage(fp.GetMessage())
+	}
+	if fp := msg.GetPollCreationMessageV6(); fp != nil && fp.GetMessage() != nil {
+		return extractPollCreationMessage(fp.GetMessage())
+	}
+	return nil
+}
+
+func extractPollOptionNames(poll *waE2E.PollCreationMessage) []string {
+	if poll == nil {
+		return nil
+	}
+	options := make([]string, 0, len(poll.GetOptions()))
+	for _, opt := range poll.GetOptions() {
+		name := strings.TrimSpace(opt.GetOptionName())
+		if name == "" {
+			continue
+		}
+		options = append(options, name)
+	}
+	return options
+}
+
+func buildPollHashIndex(options []string) map[string]string {
+	index := make(map[string]string, len(options))
+	for _, option := range options {
+		trimmed := strings.TrimSpace(option)
+		if trimmed == "" {
+			continue
+		}
+		hash := sha256.Sum256([]byte(trimmed))
+		index[hex.EncodeToString(hash[:])] = trimmed
+	}
+	return index
+}
+
+func pollMetadataKey(sessionKey string, chat types.JID, messageID string) string {
+	keySession := strings.TrimSpace(sessionKey)
+	keyChat := strings.TrimSpace(chat.String())
+	keyMessageID := strings.TrimSpace(messageID)
+	if keySession == "" || keyChat == "" || keyMessageID == "" || strings.EqualFold(keyMessageID, "unknown") {
+		return ""
+	}
+	return keySession + "|" + keyChat + "|" + keyMessageID
+}
+
+func normalizePollOptions(options []string) []string {
+	trimmedOptions := make([]string, 0, len(options))
+	for _, option := range options {
+		trimmed := strings.TrimSpace(option)
+		if trimmed == "" {
+			continue
+		}
+		trimmedOptions = append(trimmedOptions, trimmed)
+	}
+	return trimmedOptions
+}
+
+func (s *MultiTenantWhatsAppService) setPollMetadata(sessionKey string, chat types.JID, messageID, question string, options []string) {
+	var session *models.WhatsAppSession
+	if s.repository != nil {
+		if loaded, err := s.repository.GetBySessionKey(strings.TrimSpace(sessionKey)); err == nil {
+			session = loaded
+		}
+	}
+	s.setPollMetadataForSession(session, sessionKey, chat, messageID, question, options)
+}
+
+func (s *MultiTenantWhatsAppService) setPollMetadataForSession(session *models.WhatsAppSession, sessionKey string, chat types.JID, messageID, question string, options []string) {
+	if strings.TrimSpace(sessionKey) == "" && session != nil {
+		sessionKey = session.WhatsAppSessionKey
+	}
+	key := pollMetadataKey(sessionKey, chat, messageID)
+	if key == "" {
+		return
+	}
+
+	trimmedOptions := normalizePollOptions(options)
+	trimmedQuestion := strings.TrimSpace(question)
+
+	now := time.Now()
+	exp := now.Add(7 * 24 * time.Hour)
+
+	s.pollMetadataMu.Lock()
+	for k, v := range s.pollMetadata {
+		if v.expiresAt.Before(now) {
+			delete(s.pollMetadata, k)
+		}
+	}
+	s.pollMetadata[key] = pollMetadata{
+		question:         trimmedQuestion,
+		options:          append([]string(nil), trimmedOptions...),
+		optionHashToName: buildPollHashIndex(trimmedOptions),
+		expiresAt:        exp,
+	}
+	s.pollMetadataMu.Unlock()
+
+	if session == nil || s.pollRepo == nil {
+		return
+	}
+	meta := &models.PollMetadata{
+		SessionID:     session.ID,
+		TenantID:      strings.TrimSpace(session.TenantID),
+		ChatJID:       strings.TrimSpace(chat.String()),
+		PollMessageID: strings.TrimSpace(messageID),
+		Question:      trimmedQuestion,
+		Options:       append([]string(nil), trimmedOptions...),
+	}
+	if upsertErr := s.pollRepo.Upsert(meta); upsertErr != nil {
+		s.logger.Warnf("[%s] Falha ao persistir metadados da enquete %s: %v", session.WhatsAppSessionKey, messageID, upsertErr)
+	}
+}
+
+func (s *MultiTenantWhatsAppService) getPollMetadata(sessionKey string, chat types.JID, messageID string) (pollMetadata, bool) {
+	key := pollMetadataKey(sessionKey, chat, messageID)
+	if key == "" {
+		return pollMetadata{}, false
+	}
+
+	s.pollMetadataMu.RLock()
+	meta, ok := s.pollMetadata[key]
+	s.pollMetadataMu.RUnlock()
+	if !ok {
+		return pollMetadata{}, false
+	}
+	if meta.expiresAt.Before(time.Now()) {
+		s.pollMetadataMu.Lock()
+		delete(s.pollMetadata, key)
+		s.pollMetadataMu.Unlock()
+		return pollMetadata{}, false
+	}
+
+	meta.options = append([]string(nil), meta.options...)
+	meta.optionHashToName = cloneStringMap(meta.optionHashToName)
+	return meta, true
+}
+
+func cloneStringMap(input map[string]string) map[string]string {
+	if len(input) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(input))
+	for k, v := range input {
+		out[k] = v
+	}
+	return out
+}
+
+func (s *MultiTenantWhatsAppService) resolvePollVote(session *models.WhatsAppSession, chat types.JID, pollID string, selectedOptionHashes [][]byte) ([]string, []string, string) {
+	selectedOptions := make([]string, 0, len(selectedOptionHashes))
+	selectedHashes := make([]string, 0, len(selectedOptionHashes))
+
+	sessionKey := ""
+	if session != nil {
+		sessionKey = session.WhatsAppSessionKey
+	}
+	meta, hasMeta := s.getPollMetadata(sessionKey, chat, pollID)
+	if !hasMeta && session != nil && s.pollRepo != nil {
+		persistedMeta, err := s.pollRepo.GetBySessionChatAndPoll(session.ID, chat.String(), pollID)
+		if err != nil {
+			s.logger.Warnf("[%s] Falha ao buscar metadados persistidos da enquete %s: %v", session.WhatsAppSessionKey, pollID, err)
+		}
+		if persistedMeta == nil {
+			persistedMeta, err = s.pollRepo.GetBySessionAndPoll(session.ID, pollID)
+			if err != nil {
+				s.logger.Warnf("[%s] Falha ao buscar metadados persistidos da enquete %s por sessão: %v", session.WhatsAppSessionKey, pollID, err)
+			}
+		}
+		if persistedMeta != nil {
+			s.setPollMetadataForSession(
+				session,
+				session.WhatsAppSessionKey,
+				chat,
+				persistedMeta.PollMessageID,
+				persistedMeta.Question,
+				persistedMeta.Options,
+			)
+			meta, hasMeta = s.getPollMetadata(session.WhatsAppSessionKey, chat, pollID)
+		}
+	}
+
+	pollName := ""
+	if hasMeta {
+		pollName = meta.question
+	}
+
+	for _, optionHash := range selectedOptionHashes {
+		if len(optionHash) == 0 {
+			continue
+		}
+		hashHex := hex.EncodeToString(optionHash)
+		selectedHashes = append(selectedHashes, hashHex)
+		if hasMeta {
+			if optionName, ok := meta.optionHashToName[hashHex]; ok {
+				selectedOptions = append(selectedOptions, optionName)
+			}
+		}
+	}
+
+	return selectedOptions, selectedHashes, pollName
+}
+
 func buildEventFallbackText(name, description, joinLink string, startTime, endTime int64) string {
 	lines := []string{
 		fmt.Sprintf("Evento: %s", strings.TrimSpace(name)),
@@ -1264,7 +1928,6 @@ func (s *MultiTenantWhatsAppService) parsePhoneNumber(number string) (types.JID,
 	n := strings.TrimSpace(number)
 	n = strings.NewReplacer(" ", "", "-", "", "(", "", ")", "").Replace(n)
 
-	// Allow raw JIDs (e.g. group IDs like 1203...@g.us) without forcing phone normalization.
 	if strings.Contains(n, "@") {
 		jid, err := types.ParseJID(n)
 		if err != nil {
@@ -1374,7 +2037,7 @@ func (s *MultiTenantWhatsAppService) downloadMedia(url string) ([]byte, string, 
 
 	limit := s.config.Server.MaxUploadSize
 	if limit <= 0 {
-		limit = 25 << 20 // fallback 25MB
+		limit = 50 << 20 // 50 MB
 	}
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, limit))
