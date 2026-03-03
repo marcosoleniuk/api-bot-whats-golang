@@ -66,7 +66,8 @@ func (h *Handler) SendTextMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.whatsappService.SendTextMessage(req.Number, req.Text); err != nil {
+	_, err := h.whatsappService.SendTextMessage(req.Number, req.Text)
+	if err != nil {
 		h.logger.Errorf("Falha ao enviar mensagem de texto para %s: %v", req.Number, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
@@ -87,7 +88,7 @@ func (h *Handler) SendTextMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	err := json.NewEncoder(w).Encode(models.NewSuccessResponse(
+	err = json.NewEncoder(w).Encode(models.NewSuccessResponse(
 		"Mensagem enviada com sucesso",
 		messageSent,
 	))
@@ -174,7 +175,8 @@ func (h *Handler) SendMediaMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.whatsappService.SendMediaMessage(req.Number, req.Caption, req.MediaURL, req.MediaBase64, req.MimeType); err != nil {
+	_, err := h.whatsappService.SendMediaMessage(req.Number, req.Caption, req.MediaURL, req.MediaBase64, req.MimeType)
+	if err != nil {
 		h.logger.Errorf("Falha ao enviar mensagem de mídia para %s: %v", req.Number, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
@@ -195,7 +197,7 @@ func (h *Handler) SendMediaMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	err := json.NewEncoder(w).Encode(models.NewSuccessResponse(
+	err = json.NewEncoder(w).Encode(models.NewSuccessResponse(
 		"Mensagem de mídia enviada com sucesso",
 		messageSent,
 	))

@@ -206,8 +206,7 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 			CreatedAt:          s.CreatedAt.Format("2006-01-02 15:04:05"),
 		}
 		if s.LastConnectedAt != nil {
-			lastConn := s.LastConnectedAt.Format("2006-01-02 15:04:05")
-			item.LastConnectedAt = &lastConn
+			item.LastConnectedAt = new(s.LastConnectedAt.Format("2006-01-02 15:04:05"))
 		}
 		list = append(list, item)
 	}

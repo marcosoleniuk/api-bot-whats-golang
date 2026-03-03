@@ -148,6 +148,36 @@ func (r *SessionRepository) GetBySessionKeyAndTenant(sessionKey string, tenantID
 	return session, nil
 }
 
+func (r *SessionRepository) GetIDBySessionKeyAndTenant(sessionKey string, tenantID string) (uuid.UUID, error) {
+	query := `SELECT id FROM whatsapp_sessions WHERE whatsapp_session_key = $1 AND tenant_id = $2`
+	var id uuid.UUID
+	row := r.db.QueryRow(query, sessionKey, tenantID)
+
+	if err := row.Scan(&id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return uuid.UUID{}, fmt.Errorf("sessão não encontrada para este tenant")
+		}
+		return uuid.UUID{}, fmt.Errorf("falha ao buscar ID da sessão: %w", err)
+	}
+
+	return id, nil
+}
+
+func (r *SessionRepository) GetIDBySessionKey(sessionKey string) (uuid.UUID, error) {
+	query := `SELECT id FROM whatsapp_sessions WHERE whatsapp_session_key = $1`
+	var id uuid.UUID
+	row := r.db.QueryRow(query, sessionKey)
+
+	if err := row.Scan(&id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return uuid.UUID{}, fmt.Errorf("sessão não encontrada")
+		}
+		return uuid.UUID{}, fmt.Errorf("falha ao buscar ID da sessão: %w", err)
+	}
+
+	return id, nil
+}
+
 func (r *SessionRepository) UpdateQRCode(id uuid.UUID, qrCode string, expiresAt time.Time) error {
 	query := `
 		UPDATE whatsapp_sessions

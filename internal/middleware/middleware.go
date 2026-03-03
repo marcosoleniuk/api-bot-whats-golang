@@ -8,17 +8,43 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type contextKey string
 
 const TenantIDKey contextKey = "tenant_id"
+const SessionIDKey contextKey = "session_id"
+const SessionKeyKey contextKey = "session_key"
 
 func AuthMiddleware(cfg *config.Config, log *logger.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			apiToken := r.Header.Get("apitoken")
-			sessionKey := r.Header.Get("SESSIONKEY")
+			var apiToken string
+			authHeader := r.Header.Get("Authorization")
+			if authHeader != "" && len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+				apiToken = authHeader[7:]
+			} else {
+				apiToken = r.Header.Get("apitoken")
+			}
+			if apiToken == "" {
+				apiToken = r.URL.Query().Get("apitoken")
+			}
+
+			sessionKey := r.Header.Get("X-WhatsApp-Session-Key")
+			if sessionKey == "" {
+				sessionKey = r.Header.Get("SESSIONKEY")
+			}
+			if sessionKey == "" {
+				sessionKey = r.URL.Query().Get("X-WhatsApp-Session-Key")
+			}
+			if sessionKey == "" {
+				sessionKey = r.URL.Query().Get("SESSIONKEY")
+			}
+			if sessionKey == "" {
+				sessionKey = r.URL.Query().Get("session_key")
+			}
 
 			if apiToken != cfg.Auth.APIToken {
 				log.Warnf("Tentativa de acesso não autorizado de %s - Token inválido",
@@ -54,6 +80,7 @@ func AuthMiddleware(cfg *config.Config, log *logger.Logger) func(http.Handler) h
 			}
 
 			ctx := context.WithValue(r.Context(), TenantIDKey, sessionKey)
+			ctx = context.WithValue(ctx, SessionKeyKey, sessionKey)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -62,6 +89,20 @@ func AuthMiddleware(cfg *config.Config, log *logger.Logger) func(http.Handler) h
 func GetTenantID(r *http.Request) string {
 	if tenantID, ok := r.Context().Value(TenantIDKey).(string); ok {
 		return tenantID
+	}
+	return ""
+}
+
+func GetSessionID(r *http.Request) uuid.UUID {
+	if sessionID, ok := r.Context().Value(SessionIDKey).(uuid.UUID); ok {
+		return sessionID
+	}
+	return uuid.Nil
+}
+
+func GetSessionKey(r *http.Request) string {
+	if sessionKey, ok := r.Context().Value(SessionKeyKey).(string); ok {
+		return sessionKey
 	}
 	return ""
 }
@@ -113,6 +154,10 @@ type responseWriter struct {
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+func (rw *responseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
 }
 
 func CORSMiddleware() func(http.Handler) http.Handler {

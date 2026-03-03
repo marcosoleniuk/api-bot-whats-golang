@@ -78,38 +78,43 @@ func (s *WhatsAppService) IsConnected() bool {
 	return s.client != nil && s.client.IsConnected()
 }
 
-func (s *WhatsAppService) SendTextMessage(number, text string) error {
+func (s *WhatsAppService) SendTextMessage(number, text string) (string, error) {
 	jid, err := s.parsePhoneNumber(number)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_, err = s.client.SendMessage(ctx, jid, &waE2E.Message{
+	resp, err := s.client.SendMessage(ctx, jid, &waE2E.Message{
 		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
 			Text: proto.String(text),
 		},
 	})
 
 	if err != nil {
-		return fmt.Errorf("falha ao enviar mensagem: %w", err)
+		return "", fmt.Errorf("falha ao enviar mensagem: %w", err)
 	}
 
-	s.logger.Infof("Mensagem de texto enviada para %s", number)
-	return nil
+	messageID := resp.ID
+	if messageID == "" {
+		messageID = "unknown"
+	}
+
+	s.logger.Infof("Mensagem de texto enviada para %s com ID: %s", number, messageID)
+	return messageID, nil
 }
 
-func (s *WhatsAppService) SendMediaMessage(number, caption, mediaURL, mediaBase64, mimeType string) error {
+func (s *WhatsAppService) SendMediaMessage(number, caption, mediaURL, mediaBase64, mimeType string) (string, error) {
 	jid, err := s.parsePhoneNumber(number)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	mediaData, contentType, filename, err := s.prepareMediaData(mediaURL, mediaBase64, mimeType)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	mediaType := s.determineMediaType(contentType)
@@ -121,20 +126,25 @@ func (s *WhatsAppService) SendMediaMessage(number, caption, mediaURL, mediaBase6
 
 	uploaded, err := s.client.Upload(ctx, mediaData, mediaType)
 	if err != nil {
-		return fmt.Errorf("falha ao fazer upload da mídia: %w", err)
+		return "", fmt.Errorf("falha ao fazer upload da mídia: %w", err)
 	}
 
 	s.logger.Infof("Mídia enviada com sucesso: URL=%s", uploaded.URL)
 
 	message := s.buildMediaMessage(uploaded, mediaData, contentType, caption, filename)
 
-	_, err = s.client.SendMessage(ctx, jid, message)
+	resp, err := s.client.SendMessage(ctx, jid, message)
 	if err != nil {
-		return fmt.Errorf("falha ao enviar mensagem de mídia: %w", err)
+		return "", fmt.Errorf("falha ao enviar mensagem de mídia: %w", err)
 	}
 
-	s.logger.Infof("Mensagem de mídia enviada para %s", number)
-	return nil
+	messageID := resp.ID
+	if messageID == "" {
+		messageID = "unknown"
+	}
+
+	s.logger.Infof("Mensagem de mídia enviada para %s com ID: %s", number, messageID)
+	return messageID, nil
 }
 
 func (s *WhatsAppService) parsePhoneNumber(number string) (types.JID, error) {
