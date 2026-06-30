@@ -1,4 +1,4 @@
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 RUN apk add --no-cache \
     gcc \
@@ -9,11 +9,12 @@ RUN apk add --no-cache \
 WORKDIR /app
 
 COPY go.mod go.sum ./
+COPY dependencies/go.mod whatsmeow/go.sum ./whatsmeow/
 RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo \
+RUN CGO_ENABLED=1 GOOS=linux go build -mod=mod -a -installsuffix cgo \
     -ldflags="-w -s" \
     -o /app/whatsapp-bot \
     ./cmd/api/main.go
