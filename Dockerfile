@@ -9,7 +9,7 @@ RUN apk add --no-cache \
 WORKDIR /app
 
 COPY go.mod go.sum ./
-COPY dependencies/go.mod whatsmeow/go.sum ./whatsmeow/
+COPY dependencies/go.mod dependencies/go.sum ./dependencies/
 RUN go mod download
 
 COPY . .

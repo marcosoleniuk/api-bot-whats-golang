@@ -5,7 +5,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 // Package whatsmeow implements a client for interacting with the WhatsApp web multidevice API.
-package dependencies
+package whatsmeow
 
 import (
 	"context"

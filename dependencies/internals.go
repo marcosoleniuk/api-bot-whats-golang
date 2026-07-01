@@ -3,7 +3,7 @@
 //go:generate go run internals_generate.go
 //go:generate goimports -local go.mau.fi/whatsmeow -w internals.go
 
-package dependencies
+package whatsmeow
 
 import (
 	"context"
