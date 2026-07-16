@@ -93,6 +93,7 @@ func main() {
 	whatsappService.SetWebhookService(webhookService)
 	whatsappService.SetMessageService(messageService)
 	whatsappService.SetRealtimeService(realtimeService)
+	whatsappService.StartConnectionMonitor(appCtx)
 
 	router := setupRouter(messageHandler, sessionHandler, webhookHandler, conversationHandler, realtimeHandler, cfg, log)
 

@@ -443,10 +443,17 @@ func (s *MultiTenantWhatsAppService) registerEventHandlers(client *whatsmeow.Cli
 			})
 
 		case *events.Disconnected:
+			s.logger.Warnf("[%s] Sessão desconectada - tentando reconectar automaticamente...", session.WhatsAppSessionKey)
 			_ = s.repository.UpdateStatus(session.ID, models.SessionStatusDisconnected, "", "")
 			s.publishRealtimeEvent(session, "session.disconnected", map[string]interface{}{
 				"status": models.SessionStatusDisconnected,
 			})
+			go func() {
+				time.Sleep(2 * time.Second)
+				if err := s.reconnectSession(session); err != nil {
+					s.logger.Errorf("[%s] Falha ao reconectar após desconexão: %v", session.WhatsAppSessionKey, err)
+				}
+			}()
 
 		case *events.LoggedOut:
 			if client.Store != nil {
@@ -660,6 +667,13 @@ func (s *MultiTenantWhatsAppService) registerEventHandlers(client *whatsmeow.Cli
 				realtimeData.PollOptions = append([]string(nil), pollOptions...)
 			}
 			s.publishRealtimeEvent(session, "message.received", realtimeData)
+
+		case *events.ClientOutdated:
+			s.logger.Errorf("[%s] Versão do cliente WhatsApp desatualizada - será necessário atualizar a biblioteca whatsmeow", session.WhatsAppSessionKey)
+			s.publishRealtimeEvent(session, "session.client_outdated", map[string]interface{}{
+				"status":  models.SessionStatusDisconnected,
+				"message": "Client version outdated, library update required",
+			})
 
 		default:
 			s.logger.Infof("[%s] Evento desconhecido recebido: %T", session.WhatsAppSessionKey, evt)
@@ -1183,7 +1197,15 @@ func (s *MultiTenantWhatsAppService) GetClient(sessionKey string) (*whatsmeow.Cl
 		return nil, fmt.Errorf("sessão não está autenticada")
 	}
 	if !waClient.Client.IsConnected() {
-		return nil, fmt.Errorf("sessão não está conectada")
+		s.logger.Warnf("[%s] Cliente desconectado ao tentar enviar - tentando reconectar...", sessionKey)
+		if err := s.reconnectSession(waClient.Session); err != nil {
+			return nil, fmt.Errorf("sessão não está conectada e reconexão falhou: %w", err)
+		}
+		time.Sleep(1 * time.Second)
+		if !waClient.Client.IsConnected() {
+			return nil, fmt.Errorf("sessão não está conectada após tentativa de reconexão")
+		}
+		s.logger.Infof("[%s] Reconexão bem-sucedida após detecção de desconexão", sessionKey)
 	}
 	return waClient.Client, nil
 }
@@ -1208,7 +1230,22 @@ func (s *MultiTenantWhatsAppService) SendTextMessage(sessionKey, number, text st
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("falha ao enviar mensagem: %w", err)
+		if s.shouldReconnectOnError(err) {
+			s.logger.Warnf("[%s] Erro ao enviar mensagem, tentando reconectar: %v", sessionKey, err)
+			if recErr := s.reconnectSession(s.clients.GetOrNil(sessionKey)); recErr == nil {
+				time.Sleep(500 * time.Millisecond)
+				if newClient, newErr := s.GetClient(sessionKey); newErr == nil {
+					resp, err = newClient.SendMessage(context.Background(), jid, &waE2E.Message{
+						ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+							Text: proto.String(text),
+						},
+					})
+				}
+			}
+		}
+		if err != nil {
+			return "", fmt.Errorf("falha ao enviar mensagem: %w", err)
+		}
 	}
 
 	messageID := resp.ID
@@ -1249,7 +1286,18 @@ func (s *MultiTenantWhatsAppService) SendMediaMessage(sessionKey, number, captio
 
 	resp, err := client.SendMessage(ctx, jid, msg)
 	if err != nil {
-		return "", "", "", nil, fmt.Errorf("falha ao enviar mensagem de mídia: %w", err)
+		if s.shouldReconnectOnError(err) {
+			s.logger.Warnf("[%s] Erro ao enviar mídia, tentando reconectar: %v", sessionKey, err)
+			if recErr := s.reconnectSession(s.clients.GetOrNil(sessionKey)); recErr == nil {
+				time.Sleep(500 * time.Millisecond)
+				if newClient, newErr := s.GetClient(sessionKey); newErr == nil {
+					resp, err = newClient.SendMessage(context.Background(), jid, msg)
+				}
+			}
+		}
+		if err != nil {
+			return "", "", "", nil, fmt.Errorf("falha ao enviar mensagem de mídia: %w", err)
+		}
 	}
 
 	messageID := resp.ID
@@ -1308,7 +1356,18 @@ func (s *MultiTenantWhatsAppService) SendAudioMessage(sessionKey, number, mediaU
 	sendStartedAt := time.Now()
 	resp, err := client.SendMessage(ctx, jid, msg)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("falha ao enviar áudio: %w", err)
+		if s.shouldReconnectOnError(err) {
+			s.logger.Warnf("[%s] Erro ao enviar áudio, tentando reconectar: %v", sessionKey, err)
+			if recErr := s.reconnectSession(s.clients.GetOrNil(sessionKey)); recErr == nil {
+				time.Sleep(500 * time.Millisecond)
+				if newClient, newErr := s.GetClient(sessionKey); newErr == nil {
+					resp, err = newClient.SendMessage(context.Background(), jid, msg)
+				}
+			}
+		}
+		if err != nil {
+			return "", "", nil, fmt.Errorf("falha ao enviar áudio: %w", err)
+		}
 	}
 	s.logger.Infof("[%s] SendMessage de áudio concluído em %v (id=%s)", sessionKey, time.Since(sendStartedAt), resp.ID)
 
@@ -1364,7 +1423,18 @@ func (s *MultiTenantWhatsAppService) SendVideoMessage(sessionKey, number, captio
 
 	resp, err := client.SendMessage(ctx, jid, msg)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("falha ao enviar vídeo: %w", err)
+		if s.shouldReconnectOnError(err) {
+			s.logger.Warnf("[%s] Erro ao enviar vídeo, tentando reconectar: %v", sessionKey, err)
+			if recErr := s.reconnectSession(s.clients.GetOrNil(sessionKey)); recErr == nil {
+				time.Sleep(500 * time.Millisecond)
+				if newClient, newErr := s.GetClient(sessionKey); newErr == nil {
+					resp, err = newClient.SendMessage(context.Background(), jid, msg)
+				}
+			}
+		}
+		if err != nil {
+			return "", "", nil, fmt.Errorf("falha ao enviar vídeo: %w", err)
+		}
 	}
 
 	messageID := resp.ID
@@ -1393,7 +1463,18 @@ func (s *MultiTenantWhatsAppService) SendPollMessage(sessionKey, number, questio
 
 	resp, err := client.SendMessage(ctx, jid, msg)
 	if err != nil {
-		return "", fmt.Errorf("falha ao enviar enquete: %w", err)
+		if s.shouldReconnectOnError(err) {
+			s.logger.Warnf("[%s] Erro ao enviar enquete, tentando reconectar: %v", sessionKey, err)
+			if recErr := s.reconnectSession(s.clients.GetOrNil(sessionKey)); recErr == nil {
+				time.Sleep(500 * time.Millisecond)
+				if newClient, newErr := s.GetClient(sessionKey); newErr == nil {
+					resp, err = newClient.SendMessage(context.Background(), jid, msg)
+				}
+			}
+		}
+		if err != nil {
+			return "", fmt.Errorf("falha ao enviar enquete: %w", err)
+		}
 	}
 
 	messageID := resp.ID
@@ -1654,10 +1735,13 @@ func extractPollCreationMessage(msg *waE2E.Message) *waE2E.PollCreationMessage {
 	if poll := msg.GetPollCreationMessageV5(); poll != nil {
 		return poll
 	}
+	if fp := msg.GetPollCreationMessageV6(); fp != nil && fp.GetMessage() != nil {
+		return extractPollCreationMessage(fp.GetMessage())
+	}
 	if fp := msg.GetPollCreationMessageV4(); fp != nil && fp.GetMessage() != nil {
 		return extractPollCreationMessage(fp.GetMessage())
 	}
-	if fp := msg.GetPollCreationMessageV6(); fp != nil && fp.GetMessage() != nil {
+	if fp := msg.GetPollCreationOptionImageMessage(); fp != nil && fp.GetMessage() != nil {
 		return extractPollCreationMessage(fp.GetMessage())
 	}
 	return nil
@@ -2166,4 +2250,63 @@ func (s *MultiTenantWhatsAppService) Shutdown() {
 		}
 		s.clients.Delete(key)
 	})
+}
+
+// GetOrNil returns the WhatsAppClient for a session key, or nil if not found.
+// Used internally to access session without the full GetClient checks.
+func (cs *clientStore) GetOrNil(key string) *models.WhatsAppSession {
+	waClient, ok := cs.Get(key)
+	if !ok || waClient == nil {
+		return nil
+	}
+	return waClient.Session
+}
+
+// shouldReconnectOnError determines if an error from SendMessage warrants a reconnection attempt.
+func (s *MultiTenantWhatsAppService) shouldReconnectOnError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "server returned error") ||
+		strings.Contains(errStr, "connection") ||
+		strings.Contains(errStr, "timeout") ||
+		strings.Contains(errStr, "not connected") ||
+		strings.Contains(errStr, "EOF")
+}
+
+// StartConnectionMonitor launches a background goroutine that periodically checks
+// all session connections and reconnects any that are disconnected.
+func (s *MultiTenantWhatsAppService) StartConnectionMonitor(ctx context.Context) {
+	checkInterval := s.config.WhatsApp.ReconnectDelay
+	if checkInterval < 10*time.Second {
+		checkInterval = 30 * time.Second
+	}
+
+	s.logger.Infof("Monitor de conexão iniciado (intervalo=%v)", checkInterval)
+
+	go func() {
+		ticker := time.NewTicker(checkInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				s.logger.Info("Monitor de conexão encerrado")
+				return
+			case <-ticker.C:
+				s.clients.Range(func(key string, waClient *WhatsAppClient) {
+					if waClient == nil || waClient.Client == nil || waClient.Session == nil {
+						return
+					}
+					if !waClient.Client.IsConnected() && waClient.Client.Store != nil && waClient.Client.Store.ID != nil {
+						s.logger.Warnf("[%s] Monitor detectou sessão desconectada - reconectando...", key)
+						if err := s.reconnectSession(waClient.Session); err != nil {
+							s.logger.Errorf("[%s] Falha na reconexão via monitor: %v", key, err)
+						}
+					}
+				})
+			}
+		}
+	}()
 }
