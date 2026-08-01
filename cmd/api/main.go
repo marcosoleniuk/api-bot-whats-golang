@@ -94,6 +94,7 @@ func main() {
 	whatsappService.SetMessageService(messageService)
 	whatsappService.SetRealtimeService(realtimeService)
 	whatsappService.StartConnectionMonitor(appCtx)
+	whatsappService.StartVersionRefresh(appCtx)
 
 	router := setupRouter(messageHandler, sessionHandler, webhookHandler, conversationHandler, realtimeHandler, cfg, log)
 
@@ -206,6 +207,8 @@ func setupRouter(
 	api.HandleFunc("/webhooks/{webhookId}", wh.UpdateWebhook).Methods("PUT")
 	api.HandleFunc("/webhooks/{webhookId}", wh.DeleteWebhook).Methods("DELETE")
 	api.HandleFunc("/webhooks/{webhookId}/logs", wh.GetWebhookLogs).Methods("GET")
+
+	api.HandleFunc("/version/refresh", mh.RefreshWAVersion).Methods("POST")
 
 	api.HandleFunc("/sendText", mh.SendTextMessage).Methods("POST")
 	api.HandleFunc("/sendMedia", mh.SendMediaMessage).Methods("POST")

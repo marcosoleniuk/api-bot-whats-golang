@@ -111,12 +111,13 @@ type ErrorResponse struct {
 }
 
 type HealthResponse struct {
-	Status    string            `json:"status"`
-	Service   string            `json:"service"`
-	Version   string            `json:"version"`
-	Uptime    string            `json:"uptime"`
-	Timestamp time.Time         `json:"timestamp"`
-	Checks    map[string]string `json:"checks"`
+	Status          string            `json:"status"`
+	Service         string            `json:"service"`
+	Version         string            `json:"version"`
+	WhatsAppVersion string            `json:"whatsapp_version,omitempty"`
+	Uptime          string            `json:"uptime"`
+	Timestamp       time.Time         `json:"timestamp"`
+	Checks          map[string]string `json:"checks"`
 }
 
 type MessageSent struct {

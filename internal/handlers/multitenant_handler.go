@@ -8,6 +8,7 @@ import (
 	"boot-whatsapp-golang/internal/services"
 	"boot-whatsapp-golang/pkg/logger"
 	"boot-whatsapp-golang/pkg/validator"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -1273,11 +1274,12 @@ func (h *MultiTenantHandler) Health(w http.ResponseWriter, r *http.Request) {
 	}
 
 	health := models.HealthResponse{
-		Status:    "healthy",
-		Service:   "WhatsApp Bot API (Multi Sessões)",
-		Version:   "2.0.0",
-		Uptime:    uptime.String(),
-		Timestamp: time.Now(),
+		Status:          "healthy",
+		Service:         "WhatsApp Bot API (Multi Sessões)",
+		Version:         "2.0.0",
+		WhatsAppVersion: h.whatsappService.GetWAVersion(),
+		Uptime:          uptime.String(),
+		Timestamp:       time.Now(),
 		Checks: map[string]string{
 			"api":                "ok",
 			"total_sessions":     sessionsCount,
@@ -1299,6 +1301,34 @@ func (h *MultiTenantHandler) NotFound(w http.ResponseWriter, r *http.Request) {
 		"NOT_FOUND",
 		map[string]string{"path": r.URL.Path},
 	))
+	if err != nil {
+		return
+	}
+}
+
+// RefreshWAVersion forces a refresh of the WhatsApp Web version from the official source.
+func (h *MultiTenantHandler) RefreshWAVersion(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	if err := h.whatsappService.RefreshWAVersion(ctx); err != nil {
+		h.logger.Errorf("Falha ao atualizar versão do WhatsApp Web: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		err := json.NewEncoder(w).Encode(models.NewErrorResponse(
+			"Falha ao atualizar versão do WhatsApp Web",
+			"VERSION_REFRESH_FAILED",
+			map[string]string{"error": err.Error()},
+		))
+		if err != nil {
+			return
+		}
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	err := json.NewEncoder(w).Encode(models.NewSuccessResponse("Versão do WhatsApp Web atualizada", map[string]string{
+		"version": h.whatsappService.GetWAVersion(),
+	}))
 	if err != nil {
 		return
 	}

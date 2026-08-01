@@ -158,6 +158,9 @@ func (s *WhatsAppService) parsePhoneNumber(number string) (types.JID, error) {
 		if !strings.HasPrefix(number, s.config.WhatsApp.DefaultCountry) {
 			number = s.config.WhatsApp.DefaultCountry + number
 		}
+		// Remove o nono dígito (9) de números brasileiros quando presente.
+		// Ex: 5511991234567 -> 551191234567
+		number = removeBrazilianExtraNineLegacy(number)
 		number = number + "@s.whatsapp.net"
 	}
 
@@ -167,6 +170,15 @@ func (s *WhatsAppService) parsePhoneNumber(number string) (types.JID, error) {
 	}
 
 	return jid, nil
+}
+
+// removeBrazilianExtraNineLegacy removes the extra "9" digit from Brazilian mobile numbers.
+// For use in the legacy WhatsAppService.
+func removeBrazilianExtraNineLegacy(n string) string {
+	if strings.HasPrefix(n, "55") && len(n) >= 13 && len(n[4:]) >= 9 && n[4] == '9' {
+		return n[:4] + n[5:]
+	}
+	return n
 }
 
 func (s *WhatsAppService) prepareMediaData(mediaURL, mediaBase64, mimeType string) ([]byte, string, string, error) {

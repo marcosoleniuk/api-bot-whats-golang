@@ -150,6 +150,11 @@ type MultiTenantWhatsAppService struct {
 
 	pollMetadataMu sync.RWMutex
 	pollMetadata   map[string]pollMetadata
+
+	// WhatsApp Web version auto-update
+	currentWAVersion   string
+	waVersionMu        sync.RWMutex
+	versionRefreshStop chan struct{}
 }
 
 type pendingEventFallback struct {
@@ -208,6 +213,13 @@ func NewMultiTenantWhatsAppService(cfg *config.Config, db *sql.DB, log *logger.L
 	if err := service.LoadExistingSessions(); err != nil {
 		log.Warnf("Falha ao carregar sessões existentes: %v", err)
 	}
+
+	// Fetch the latest WhatsApp Web version at startup
+	initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if err := service.RefreshWAVersion(initCtx); err != nil {
+		log.Warnf("Falha ao obter versão mais recente do WhatsApp Web no startup: %v", err)
+	}
+	initCancel()
 
 	return service, nil
 }
@@ -2024,6 +2036,9 @@ func (s *MultiTenantWhatsAppService) parsePhoneNumber(number string) (types.JID,
 		if !strings.HasPrefix(n, s.config.WhatsApp.DefaultCountry) {
 			n = s.config.WhatsApp.DefaultCountry + n
 		}
+		// Remove o nono dígito (9) de números brasileiros quando presente.
+		// Ex: 5511991234567 -> 551191234567
+		n = removeBrazilianExtraNine(n)
 		n = n + "@s.whatsapp.net"
 	}
 
@@ -2032,6 +2047,19 @@ func (s *MultiTenantWhatsAppService) parsePhoneNumber(number string) (types.JID,
 		return types.JID{}, fmt.Errorf("número de telefone inválido: %w", err)
 	}
 	return jid, nil
+}
+
+// removeBrazilianExtraNine removes the extra "9" digit from Brazilian mobile numbers.
+// Brazilian format: 55 + DD (area code) + subscriber.
+// Mobile numbers with the extra 9 have 9 digits in the subscriber portion,
+// making the total 13 digits (55 + 2 + 9 = 13). The "9" at position 4
+// (right after the area code) should be removed for WhatsApp delivery.
+// Example: 5511991234567 becomes 551191234567
+func removeBrazilianExtraNine(n string) string {
+	if strings.HasPrefix(n, "55") && len(n) >= 13 && len(n[4:]) >= 9 && n[4] == '9' {
+		return n[:4] + n[5:]
+	}
+	return n
 }
 
 func (s *MultiTenantWhatsAppService) prepareMedia(mediaURL, mediaBase64, mimeType string) ([]byte, string, string, error) {
@@ -2240,6 +2268,11 @@ func (s *MultiTenantWhatsAppService) buildMediaMessage(uploaded whatsmeow.Upload
 }
 
 func (s *MultiTenantWhatsAppService) Shutdown() {
+	// Stop the version refresh goroutine
+	if s.versionRefreshStop != nil {
+		close(s.versionRefreshStop)
+	}
+
 	s.logger.Info("Desconectando todas as sessões...")
 	s.clients.Range(func(key string, waClient *WhatsAppClient) {
 		if waClient != nil && waClient.cancelQR != nil {
@@ -2277,6 +2310,65 @@ func (s *MultiTenantWhatsAppService) shouldReconnectOnError(err error) bool {
 
 // StartConnectionMonitor launches a background goroutine that periodically checks
 // all session connections and reconnects any that are disconnected.
+// GetWAVersion returns the current WhatsApp Web version being used by the service.
+func (s *MultiTenantWhatsAppService) GetWAVersion() string {
+	s.waVersionMu.RLock()
+	v := s.currentWAVersion
+	s.waVersionMu.RUnlock()
+	return v
+}
+
+// RefreshWAVersion fetches the latest WhatsApp Web version from web.whatsapp.com
+// and updates the library's version used for connections.
+func (s *MultiTenantWhatsAppService) RefreshWAVersion(ctx context.Context) error {
+	latestVer, err := whatsmeow.GetLatestVersion(ctx, s.httpClient)
+	if err != nil {
+		return fmt.Errorf("falha ao obter versão mais recente do WhatsApp Web: %w", err)
+	}
+
+	store.SetWAVersion(*latestVer)
+
+	versionStr := latestVer.String()
+	s.waVersionMu.Lock()
+	s.currentWAVersion = versionStr
+	s.waVersionMu.Unlock()
+
+	s.logger.Infof("Versão do WhatsApp Web atualizada para: %s", versionStr)
+	return nil
+}
+
+// StartVersionRefresh runs a background goroutine that periodically refreshes
+// the WhatsApp Web version to keep it in sync with the official client.
+func (s *MultiTenantWhatsAppService) StartVersionRefresh(ctx context.Context) {
+	const refreshInterval = 6 * time.Hour
+
+	s.versionRefreshStop = make(chan struct{})
+
+	s.logger.Infof("Atualizador de versão do WhatsApp Web iniciado (intervalo=%v)", refreshInterval)
+
+	go func() {
+		ticker := time.NewTicker(refreshInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				s.logger.Info("Atualizador de versão encerrado via contexto")
+				return
+			case <-s.versionRefreshStop:
+				s.logger.Info("Atualizador de versão encerrado via sinal")
+				return
+			case <-ticker.C:
+				refreshCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				if err := s.RefreshWAVersion(refreshCtx); err != nil {
+					s.logger.Warnf("Falha na atualização periódica da versão do WhatsApp Web: %v", err)
+				}
+				cancel()
+			}
+		}
+	}()
+}
+
 func (s *MultiTenantWhatsAppService) StartConnectionMonitor(ctx context.Context) {
 	checkInterval := s.config.WhatsApp.ReconnectDelay
 	if checkInterval < 10*time.Second {
