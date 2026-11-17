@@ -7,7 +7,7 @@ import { useSessions } from "@/components/session-provider";
 import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePoll } from "@/hooks/use-poll";
 import { apiPlain, fmtDate } from "@/lib/api";
@@ -93,14 +93,14 @@ export default function DashboardPage() {
       </div>
 
       <Card className="mt-6">
-        <CardHeader className="flex-row items-center justify-between">
-          <div>
-            <CardTitle>Sessões</CardTitle>
-            <CardDescription>Números WhatsApp cadastrados neste tenant.</CardDescription>
-          </div>
-          <Button variant="outline" size="sm" render={<Link href="/sessoes" />}>
-            Gerenciar
-          </Button>
+        <CardHeader>
+          <CardTitle>Sessões</CardTitle>
+          <CardDescription>Números WhatsApp cadastrados neste tenant.</CardDescription>
+          <CardAction>
+            <Button variant="outline" size="sm" render={<Link href="/sessoes" />}>
+              Gerenciar
+            </Button>
+          </CardAction>
         </CardHeader>
         <CardContent>
           {loadingSessions ? (

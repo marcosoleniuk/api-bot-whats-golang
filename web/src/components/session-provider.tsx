@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import type { SessionsData, WaSession } from "@/lib/types";
 import { usePoll } from "@/hooks/use-poll";
@@ -23,23 +23,21 @@ const STORAGE_KEY = "wb_selected_session";
 export function SessionProvider({ tenantKey, children }: { tenantKey: string; children: React.ReactNode }) {
   const { data, error, loading, reload } = usePoll(() => api<SessionsData>("whatsapp/sessions"), 15_000);
   const sessions = useMemo(() => data?.sessions ?? [], [data]);
-  const [selectedKey, setSelectedKeyState] = useState("");
-
-  useEffect(() => {
+  // O provider só monta no cliente (depois de /api/auth/me), então ler localStorage aqui é seguro.
+  const [preferredKey, setSelectedKeyState] = useState(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) setSelectedKeyState(saved);
-    } catch {}
-  }, []);
-
-  // Garante uma seleção válida.
-  useEffect(() => {
-    if (!sessions.length) return;
-    if (!sessions.some((s) => s.whatsapp_session_key === selectedKey)) {
-      const first = sessions.find((s) => s.status === "connected") ?? sessions[0];
-      setSelectedKeyState(first.whatsapp_session_key);
+      return localStorage.getItem(STORAGE_KEY) ?? "";
+    } catch {
+      return "";
     }
-  }, [sessions, selectedKey]);
+  });
+
+  // Seleção efetiva: a preferida, se existir; senão a primeira conectada (ou a primeira).
+  const selectedKey = useMemo(() => {
+    if (sessions.some((s) => s.whatsapp_session_key === preferredKey)) return preferredKey;
+    const first = sessions.find((s) => s.status === "connected") ?? sessions[0];
+    return first?.whatsapp_session_key ?? "";
+  }, [sessions, preferredKey]);
 
   const setSelectedKey = useCallback((k: string) => {
     setSelectedKeyState(k);

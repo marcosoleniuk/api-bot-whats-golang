@@ -375,7 +375,7 @@ export default function MessagesPage() {
         </CardHeader>
         <CardContent>
           <Tabs defaultValue="text">
-            <TabsList className="mb-4 h-auto flex-wrap">
+            <TabsList className="mb-4 h-auto w-full flex-wrap justify-start">
               <TabsTrigger value="text"><Type /> Texto</TabsTrigger>
               <TabsTrigger value="media"><FileImage /> Imagem / Arquivo</TabsTrigger>
               <TabsTrigger value="audio"><Mic /> Áudio</TabsTrigger>

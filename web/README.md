@@ -1,36 +1,45 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Moleniuk • WhatsApp Admin
 
-## Getting Started
+Painel de administração da WhatsApp Bot API (Go). Next.js 16 · React 19 · Tailwind 4 · shadcn/ui.
+Tema escuro baseado nas cores da logo (azul `#1E7BFF` e laranja `#FF9A1F`).
 
-First, run the development server:
+## Rodando
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env.local     # ajuste BOT_API_URL
+pnpm install
+pnpm dev                       # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Produção:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+pnpm build && pnpm start
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Variáveis (`.env.local`):
 
-## Learn More
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `BOT_API_URL` | `http://localhost:8080` | URL da API Go (sem `/api/v1`) |
+| `COOKIE_SECURE` | `true` em produção | Use `false` se servir o painel via HTTP puro |
 
-To learn more about Next.js, take a look at the following resources:
+## Como funciona
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- **Login:** token da API (`API_TOKEN`) + chave do tenant (valor enviado em `X-WhatsApp-Session-Key`). As credenciais
+  ficam em cookies `httpOnly`; o navegador nunca vê o token.
+- **Proxy:** tudo passa por `/api/bot/*` → `{BOT_API_URL}/api/v1/*` (e `/api/bot/health` → `/health`), o que evita CORS.
+- **Sessão selecionada:** as rotas de mensagens, conversas e webhooks usam a chave da sessão escolhida no seletor
+  como `X-WhatsApp-Session-Key`; a listagem de sessões usa a chave do tenant.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Telas
 
-## Deploy on Vercel
+Dashboard · Sessões (criar, QR code com acompanhamento, desconectar, excluir) · Enviar mensagens (texto, imagem/arquivo,
+áudio, vídeo, enquete, evento) · Conversas (contatos, histórico, mídia) · Webhooks (CRUD, eventos, headers, logs) ·
+Sistema (saúde e versão do WhatsApp Web, com atualização forçada).
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Limitações conhecidas
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- O WebSocket de tempo real (`/api/v1/ws`) não é usado: o painel atualiza por polling (conversas a cada 8 s, sessões a cada 15 s).
+- A API trata o tenant como a própria chave informada no header; qualquer pessoa com o token da API pode acessar
+  qualquer tenant. Proteja o painel e o token adequadamente.

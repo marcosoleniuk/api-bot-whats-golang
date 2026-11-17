@@ -37,7 +37,9 @@ export async function apiRaw<T = unknown>(path: string, opts: Options = {}): Pro
 
   // 401 vindo do proxy (cookie ausente/expirado) -> volta para o login.
   if (res.status === 401 && res.headers.get("x-auth-source") === "proxy" && typeof window !== "undefined") {
-    window.location.href = "/login";
+    // Recarregamento completo é intencional: limpa todo o estado do cliente.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+    window.location.assign("/login");
     throw new ApiError("Sessão expirada", 401);
   }
 

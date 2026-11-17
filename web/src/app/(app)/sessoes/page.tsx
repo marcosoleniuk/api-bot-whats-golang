@@ -50,9 +50,6 @@ function QrDialog({ sessionKey, onClose }: { sessionKey: string | null; onClose:
   useEffect(() => {
     if (!sessionKey) return;
     let stop = false;
-    setQr(null);
-    setConnected(false);
-    setError("");
 
     const tick = async () => {
       try {
@@ -315,7 +312,7 @@ export default function SessionsPage() {
           setQrKey(k);
         }}
       />
-      <QrDialog sessionKey={qrKey} onClose={() => setQrKey(null)} />
+      <QrDialog key={qrKey ?? "closed"} sessionKey={qrKey} onClose={() => setQrKey(null)} />
 
       <AlertDialog open={!!toDelete} onOpenChange={(o) => !o && setToDelete(null)}>
         <AlertDialogContent>

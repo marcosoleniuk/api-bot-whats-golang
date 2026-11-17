@@ -2,33 +2,58 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-/** Busca dados, com atualização periódica opcional. `deps` reinicia a busca. */
-export function usePoll<T>(fn: () => Promise<T>, intervalMs = 0, deps: unknown[] = []) {
-  const [data, setData] = useState<T | undefined>();
-  const [error, setError] = useState<Error | undefined>();
-  const [loading, setLoading] = useState(true);
-  const fnRef = useRef(fn);
-  fnRef.current = fn;
+interface Result<T> {
+  key: string;
+  data?: T;
+  error?: Error;
+}
 
-  const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    try {
-      setData(await fnRef.current());
-      setError(undefined);
-    } catch (e) {
-      setError(e instanceof Error ? e : new Error(String(e)));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+/**
+ * Busca dados com atualização periódica opcional. Mudar `deps` descarta o
+ * resultado anterior (loading volta a ser true) e busca de novo.
+ */
+export function usePoll<T>(fn: () => Promise<T>, intervalMs = 0, deps: unknown[] = []) {
+  const depsKey = JSON.stringify(deps);
+  const [res, setRes] = useState<Result<T>>({ key: "" });
+  const fnRef = useRef(fn);
+  const runRef = useRef<() => Promise<void>>(async () => {});
 
   useEffect(() => {
-    void load();
-    if (!intervalMs) return;
-    const id = setInterval(() => void load(true), intervalMs);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [load, intervalMs, ...deps]);
+    fnRef.current = fn;
+  });
 
-  return { data, error, loading, reload: () => load(), setData };
+  useEffect(() => {
+    let alive = true;
+    const run = async () => {
+      try {
+        const data = await fnRef.current();
+        if (alive) setRes({ key: depsKey, data });
+      } catch (e) {
+        if (alive) {
+          setRes((p) => ({
+            key: depsKey,
+            data: p.key === depsKey ? p.data : undefined,
+            error: e instanceof Error ? e : new Error(String(e)),
+          }));
+        }
+      }
+    };
+    runRef.current = run;
+    void run();
+    const id = intervalMs ? setInterval(() => void run(), intervalMs) : undefined;
+    return () => {
+      alive = false;
+      if (id) clearInterval(id);
+    };
+  }, [depsKey, intervalMs]);
+
+  const reload = useCallback(() => runRef.current(), []);
+  const current = res.key === depsKey;
+
+  return {
+    data: current ? res.data : undefined,
+    error: current ? res.error : undefined,
+    loading: !current,
+    reload,
+  };
 }

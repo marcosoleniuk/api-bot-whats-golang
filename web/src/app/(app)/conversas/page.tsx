@@ -58,7 +58,10 @@ function Bubble({ m }: { m: ChatMessage }) {
 
 export default function ConversationsPage() {
   const { selectedKey } = useSessions();
-  const [contact, setContact] = useState("");
+  const [picked, setPicked] = useState({ session: "", contact: "" });
+  // O contato escolhido só vale para a sessão em que foi escolhido.
+  const contact = picked.session === selectedKey ? picked.contact : "";
+  const setContact = (c: string) => setPicked({ session: selectedKey, contact: c });
   const [filter, setFilter] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -86,10 +89,6 @@ export default function ConversationsPage() {
     8_000,
     [selectedKey, contact],
   );
-
-  useEffect(() => {
-    setContact("");
-  }, [selectedKey]);
 
   const list = useMemo(() => {
     const all = contacts.data?.contacts ?? [];
