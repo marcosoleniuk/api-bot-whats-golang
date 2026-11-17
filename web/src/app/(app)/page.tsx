@@ -97,7 +97,7 @@ export default function DashboardPage() {
           <CardTitle>Sessões</CardTitle>
           <CardDescription>Números WhatsApp cadastrados neste tenant.</CardDescription>
           <CardAction>
-            <Button variant="outline" size="sm" render={<Link href="/sessoes" />}>
+            <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/sessoes" />}>
               Gerenciar
             </Button>
           </CardAction>
@@ -109,7 +109,7 @@ export default function DashboardPage() {
             <div className="flex flex-col items-center gap-3 py-8 text-center">
               <Smartphone className="size-8 text-muted-foreground" />
               <p className="text-sm text-muted-foreground">Nenhuma sessão cadastrada ainda.</p>
-              <Button size="sm" render={<Link href="/sessoes" />}>
+              <Button size="sm" nativeButton={false} render={<Link href="/sessoes" />}>
                 Criar primeira sessão
               </Button>
             </div>
