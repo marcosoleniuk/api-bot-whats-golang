@@ -87,13 +87,8 @@ export interface MessageStats {
   contact_count: number;
 }
 
-/** Eventos emitidos pelo serviço Go para webhooks. */
-export const WEBHOOK_EVENTS = [
-  "message.received",
-  "message.receipt",
-  "message.read",
-  "session.connected",
-  "session.disconnected",
-  "session.logged_out",
-  "session.client_outdated",
-] as const;
+/**
+ * Eventos que disparam webhooks no serviço Go ("*" = todos).
+ * Os eventos session.* e message.receipt existem só no WebSocket.
+ */
+export const WEBHOOK_EVENTS = ["message.sent", "message.received", "message.read", "*"] as const;

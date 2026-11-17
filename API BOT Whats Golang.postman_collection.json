@@ -1,97 +1,268 @@
 {
   "info": {
-    "name": "WhatsApp Bot API Multi Sessoes MOleniuk",
     "_postman_id": "9c5ad56a-2b7b-4f8f-9f06-8b8f7a5d65d1",
-    "description": "Collection atualizada com gerenciamento de sessoes, envio de mensagens, historico, webhooks, websocket e rotas legadas.",
+    "name": "WhatsApp Bot API Multi Sessões - MOleniuk",
+    "description": "API REST em Go para múltiplas sessões do WhatsApp.\n\n**Como usar**\n1. Ajuste as variáveis da collection (`baseUrl`, `apiToken`, `tenantSessionKey`, `waSessionKey`, `phoneNumber`).\n2. `Sessões → Registrar sessão` e escaneie o QR code.\n3. Envie mensagens em `Mensagens`.\n\n**Autenticação:** o `apitoken` é enviado em todas as requisições (herdado da collection). Rotas de gerenciamento usam o header `SESSIONKEY` (tenant); rotas de mensagens, histórico e webhooks usam `X-WhatsApp-Session-Key` (whatsappSessionKey).\n\n`sessionID`, `messageID`, `webhookId` e as datas do evento são preenchidos automaticamente.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      {
+        "key": "key",
+        "value": "apitoken",
+        "type": "string"
+      },
+      {
+        "key": "value",
+        "value": "{{apiToken}}",
+        "type": "string"
+      },
+      {
+        "key": "in",
+        "value": "header",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Datas de evento sempre no futuro (formato aceito pela API: YYYY-MM-DDTHH:MM:SS, fuso do servidor).",
+          "const pad = n => String(n).padStart(2, '0');",
+          "const fmt = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`;",
+          "const start = new Date(Date.now() + 24 * 60 * 60 * 1000);",
+          "const end = new Date(start.getTime() + 60 * 60 * 1000);",
+          "pm.collectionVariables.set('eventStart', fmt(start));",
+          "pm.collectionVariables.set('eventEnd', fmt(end));"
+        ]
+      }
+    }
+  ],
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:8080"
+      "value": "http://localhost:8080",
+      "description": "URL HTTP da API (sem barra final)"
     },
     {
       "key": "wsBaseUrl",
-      "value": "ws://localhost:8080"
+      "value": "ws://localhost:8080",
+      "description": "URL WebSocket da API"
     },
     {
       "key": "apiToken",
-      "value": "seu-api-token"
+      "value": "seu-api-token",
+      "description": "Valor do API_TOKEN"
     },
     {
       "key": "tenantSessionKey",
-      "value": "tenant-demo"
+      "value": "tenant-demo",
+      "description": "Chave do tenant (rotas /whatsapp e /conversations)"
     },
     {
       "key": "waSessionKey",
-      "value": "cliente-001"
+      "value": "cliente-001",
+      "description": "whatsappSessionKey da sessão"
     },
     {
       "key": "phoneNumber",
-      "value": "5511999999999"
+      "value": "5511999999999",
+      "description": "Destino: só dígitos, com DDI e DDD"
     },
     {
       "key": "sessionID",
-      "value": "uuid-da-sessao"
+      "value": "",
+      "description": "UUID da sessão (preenchido automaticamente)"
     },
     {
       "key": "messageID",
-      "value": "uuid-da-mensagem"
+      "value": "",
+      "description": "UUID de uma mensagem do histórico (preenchido automaticamente)"
     },
     {
       "key": "messageFilename",
-      "value": "media.bin"
+      "value": "media.bin",
+      "description": "Nome do arquivo de mídia (preenchido automaticamente)"
     },
     {
       "key": "webhookId",
-      "value": "uuid-do-webhook"
+      "value": "",
+      "description": "UUID do webhook (preenchido automaticamente)"
     },
     {
       "key": "webhookUrl",
-      "value": "https://seu-servidor.com/webhook"
+      "value": "https://seu-servidor.com/webhook",
+      "description": "URL de destino dos webhooks"
+    },
+    {
+      "key": "eventStart",
+      "value": "",
+      "description": "Início do evento (recalculado a cada requisição)"
+    },
+    {
+      "key": "eventEnd",
+      "value": "",
+      "description": "Fim do evento (recalculado a cada requisição)"
     },
     {
       "key": "wsScopes",
-      "value": "{{waSessionKey}}"
+      "value": "{{waSessionKey}}",
+      "description": "Escopos extras do WebSocket, separados por vírgula"
     }
   ],
   "item": [
     {
       "name": "Health",
-      "request": {
-        "method": "GET",
-        "url": "{{baseUrl}}/health",
-        "description": "Health check sem autenticacao."
-      }
-    },
-    {
-      "name": "Sessoes",
+      "description": "Verificação de saúde. Não exige autenticação.",
       "item": [
         {
-          "name": "Registrar sessao",
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Status da API, uptime, versão da API, **versão do WhatsApp Web em uso** (`whatsapp_version`) e contagem de sessões.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": []
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": \"healthy\",\n  \"service\": \"WhatsApp Bot API (Multi Sessões)\",\n  \"version\": \"2.0.0\",\n  \"whatsapp_version\": \"2.3000.1054981628\",\n  \"uptime\": \"1m12.345s\",\n  \"timestamp\": \"2026-11-17T12:00:00Z\",\n  \"checks\": {\n    \"api\": \"ok\",\n    \"total_sessions\": \"1\",\n    \"connected_sessions\": \"1\"\n  }\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('API saudável', () => pm.expect(j.status).to.eql('healthy'));",
+                  "pm.test('Informa a versão do WhatsApp Web', () => pm.expect(j.whatsapp_version).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Sessões",
+      "description": "Gerenciamento de sessões. Use o header `SESSIONKEY` com a **chave do tenant** (`tenantSessionKey`).",
+      "item": [
+        {
+          "name": "Registrar sessão",
           "request": {
             "method": "POST",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "SESSIONKEY",
-                "value": "{{tenantSessionKey}}"
+                "value": "{{tenantSessionKey}}",
+                "description": "Chave do tenant"
               },
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/whatsapp/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "whatsapp",
+                "register"
+              ]
+            },
+            "description": "Cria (ou recria) uma sessão e retorna o QR code em Base64 (PNG puro). Escaneie em **WhatsApp → Aparelhos conectados**.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"whatsappSessionKey\": \"{{waSessionKey}}\",\n  \"nomePessoa\": \"Joao Silva\",\n  \"emailPessoa\": \"joao@empresa.com\"\n}"
-            },
-            "url": "{{baseUrl}}/api/v1/whatsapp/register",
-            "description": "Cria ou recria uma sessao WhatsApp e retorna QR code ou status conectado."
-          }
+              "raw": "{\n  \"whatsappSessionKey\": \"{{waSessionKey}}\",\n  \"nomePessoa\": \"João Silva\",\n  \"emailPessoa\": \"joao@empresa.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "201 Created",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": []
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": \"success\",\n  \"message\": \"Sessão registrada com sucesso. Escaneie o QR code para conectar.\",\n  \"data\": {\n    \"id\": \"c4c1efdf-5e86-438f-a595-6f2c1be7d463\",\n    \"whatsapp_session_key\": \"cliente-001\",\n    \"qr_code_base64\": \"iVBORw0KGgo...\",\n    \"status\": \"pending\",\n    \"expires_at\": \"2026-11-17T16:17:00Z\"\n  }\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const j = pm.response.json();",
+                  "pm.test('Retorna QR code', () => pm.expect(j.data.qr_code_base64).to.be.a('string'));",
+                  "if (j.data && j.data.id) pm.collectionVariables.set('sessionID', j.data.id);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Obter QR code",
@@ -99,72 +270,192 @@
             "method": "GET",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "SESSIONKEY",
-                "value": "{{tenantSessionKey}}"
+                "value": "{{tenantSessionKey}}",
+                "description": "Chave do tenant"
               }
             ],
-            "url": "{{baseUrl}}/api/v1/whatsapp/qrcode/{{waSessionKey}}"
-          }
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/whatsapp/qrcode/{{waSessionKey}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "whatsapp",
+                "qrcode",
+                "{{waSessionKey}}"
+              ]
+            },
+            "description": "Retorna o QR code atual da sessão. Se a sessão já estiver conectada, responde `qr_code_required: false`."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Resposta JSON', () => pm.response.to.be.json);"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Listar sessoes",
+          "name": "Listar sessões",
           "request": {
             "method": "GET",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "SESSIONKEY",
-                "value": "{{tenantSessionKey}}"
+                "value": "{{tenantSessionKey}}",
+                "description": "Chave do tenant"
               }
             ],
-            "url": "{{baseUrl}}/api/v1/whatsapp/sessions"
-          }
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/whatsapp/sessions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "whatsapp",
+                "sessions"
+              ]
+            },
+            "description": "Lista as sessões do tenant. Salva em `sessionID` o `id` da sessão cuja chave é `waSessionKey`."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": []
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": \"success\",\n  \"message\": \"Sessões listadas com sucesso\",\n  \"data\": {\n    \"total\": 1,\n    \"sessions\": [\n      {\n        \"id\": \"c4c1efdf-5e86-438f-a595-6f2c1be7d463\",\n        \"whatsapp_session_key\": \"cliente-001\",\n        \"nome_pessoa\": \"João Silva\",\n        \"email_pessoa\": \"joao@empresa.com\",\n        \"phone_number\": \"5511999999999\",\n        \"status\": \"connected\",\n        \"created_at\": \"2026-11-17 16:16:00\",\n        \"last_connected_at\": \"2026-11-17 16:29:44\"\n      }\n    ]\n  }\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Retorna lista de sessões', () => pm.expect(j.data.sessions).to.be.an('array'));",
+                  "const s = (j.data.sessions || []).find(x => x.whatsapp_session_key === pm.collectionVariables.get('waSessionKey'));",
+                  "if (s) pm.collectionVariables.set('sessionID', s.id);"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Desconectar sessao",
+          "name": "Desconectar sessão",
           "request": {
             "method": "POST",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "SESSIONKEY",
-                "value": "{{tenantSessionKey}}"
+                "value": "{{tenantSessionKey}}",
+                "description": "Chave do tenant"
               }
             ],
-            "url": "{{baseUrl}}/api/v1/whatsapp/disconnect/{{waSessionKey}}"
-          }
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/whatsapp/disconnect/{{waSessionKey}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "whatsapp",
+                "disconnect",
+                "{{waSessionKey}}"
+              ]
+            },
+            "description": "Desconecta a sessão do WhatsApp sem removê-la."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Resposta JSON', () => pm.response.to.be.json);"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Deletar sessao",
+          "name": "Deletar sessão",
           "request": {
             "method": "DELETE",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "SESSIONKEY",
-                "value": "{{tenantSessionKey}}"
+                "value": "{{tenantSessionKey}}",
+                "description": "Chave do tenant"
               }
             ],
-            "url": "{{baseUrl}}/api/v1/whatsapp/sessions/{{waSessionKey}}"
-          }
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/whatsapp/sessions/{{waSessionKey}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "whatsapp",
+                "sessions",
+                "{{waSessionKey}}"
+              ]
+            },
+            "description": "Remove a sessão. Será preciso parear de novo com um novo QR code."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Resposta JSON', () => pm.response.to.be.json);"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
     {
       "name": "Mensagens",
+      "description": "Envio de mensagens. Use o header `X-WhatsApp-Session-Key` com a `whatsappSessionKey` (`waSessionKey`). O corpo é validado de forma estrita: campos desconhecidos são rejeitados. `number` = só dígitos, com DDI e DDD (10 a 15).",
       "item": [
         {
           "name": "Enviar texto",
@@ -172,124 +463,294 @@
             "method": "POST",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               },
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/messages/text",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "messages",
+                "text"
+              ]
+            },
+            "description": "Envia mensagem de texto.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"text\": \"Ola!\"\n}"
-            },
-            "url": "{{baseUrl}}/api/v1/messages/text"
-          }
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"text\": \"Olá! Mensagem de teste da API.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": []
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": \"success\",\n  \"message\": \"Mensagem enviada com sucesso\",\n  \"data\": {\n    \"message_id\": \"3EB045B296E1684766D379\",\n    \"recipient\": \"5511999999999\",\n    \"type\": \"text\",\n    \"sent_at\": \"2026-11-17T17:39:49Z\"\n  },\n  \"timestamp\": \"2026-11-17T17:39:49Z\"\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Envelope de sucesso', () => pm.expect(j.status).to.eql('success'));",
+                  "pm.test('Retorna message_id', () => pm.expect(j.data && j.data.message_id).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Enviar midia por URL",
+          "name": "Enviar mídia por URL",
           "request": {
             "method": "POST",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               },
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/messages/media",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "messages",
+                "media"
+              ]
+            },
+            "description": "Imagem, documento ou mídia genérica. Informe `media_url` **ou** `media_base64`.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"caption\": \"Confira este arquivo\",\n  \"media_url\": \"https://picsum.photos/800/600\"\n}"
-            },
-            "url": "{{baseUrl}}/api/v1/messages/media"
-          }
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"caption\": \"Arquivo de teste\",\n  \"media_url\": \"https://example.com/arquivo.pdf\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Envelope de sucesso', () => pm.expect(j.status).to.eql('success'));",
+                  "pm.test('Retorna message_id', () => pm.expect(j.data && j.data.message_id).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Enviar midia por Base64",
+          "name": "Enviar mídia por Base64",
           "request": {
             "method": "POST",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               },
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/messages/media",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "messages",
+                "media"
+              ]
+            },
+            "description": "Envia imagem em Base64 puro (sem prefixo `data:`). Informe `mime_type`.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"caption\": \"Imagem em Base64\",\n  \"media_base64\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==\",\n  \"mime_type\": \"image/png\"\n}"
-            },
-            "url": "{{baseUrl}}/api/v1/messages/media"
-          }
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"caption\": \"Imagem em base64\",\n  \"media_base64\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==\",\n  \"mime_type\": \"image/png\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Envelope de sucesso', () => pm.expect(j.status).to.eql('success'));",
+                  "pm.test('Retorna message_id', () => pm.expect(j.data && j.data.message_id).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Enviar audio",
+          "name": "Enviar áudio",
           "request": {
             "method": "POST",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               },
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/messages/audio",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "messages",
+                "audio"
+              ]
+            },
+            "description": "Envia áudio por URL ou Base64. `ptt: true` envia como mensagem de voz.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"media_url\": \"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3\",\n  \"mime_type\": \"audio/mpeg\",\n  \"ptt\": false\n}"
-            },
-            "url": "{{baseUrl}}/api/v1/messages/audio"
-          }
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"media_url\": \"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3\",\n  \"mime_type\": \"audio/mpeg\",\n  \"ptt\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Envelope de sucesso', () => pm.expect(j.status).to.eql('success'));",
+                  "pm.test('Retorna message_id', () => pm.expect(j.data && j.data.message_id).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Enviar video",
+          "name": "Enviar vídeo",
           "request": {
             "method": "POST",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               },
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/messages/video",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "messages",
+                "video"
+              ]
+            },
+            "description": "Envia vídeo por URL ou Base64. `gif_playback: true` reproduz como GIF.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"caption\": \"Video de teste\",\n  \"media_url\": \"https://samplelib.com/lib/preview/mp4/sample-5s.mp4\",\n  \"mime_type\": \"video/mp4\",\n  \"gif_playback\": false\n}"
-            },
-            "url": "{{baseUrl}}/api/v1/messages/video"
-          }
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"caption\": \"Vídeo de teste\",\n  \"media_url\": \"https://samplelib.com/lib/preview/mp4/sample-5s.mp4\",\n  \"mime_type\": \"video/mp4\",\n  \"gif_playback\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Envelope de sucesso', () => pm.expect(j.status).to.eql('success'));",
+                  "pm.test('Retorna message_id', () => pm.expect(j.data && j.data.message_id).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Enviar enquete",
@@ -297,97 +758,254 @@
             "method": "POST",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               },
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/messages/poll",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "messages",
+                "poll"
+              ]
+            },
+            "description": "Envia enquete. `selectable_options_count` define quantas opções podem ser marcadas.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"question\": \"Qual opcao voce prefere?\",\n  \"options\": [\"Opcao A\", \"Opcao B\", \"Opcao C\"],\n  \"selectable_options_count\": 1\n}"
-            },
-            "url": "{{baseUrl}}/api/v1/messages/poll"
-          }
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"question\": \"Qual opção você prefere?\",\n  \"options\": [\n    \"Opção A\",\n    \"Opção B\",\n    \"Opção C\"\n  ],\n  \"selectable_options_count\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Envelope de sucesso', () => pm.expect(j.status).to.eql('success'));",
+                  "pm.test('Retorna message_id', () => pm.expect(j.data && j.data.message_id).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Enviar evento video",
+          "name": "Enviar evento (vídeo)",
           "request": {
             "method": "POST",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               },
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/messages/event",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "messages",
+                "event"
+              ]
+            },
+            "description": "Evento com chamada de vídeo. `start_time` precisa estar no futuro (as variáveis `eventStart`/`eventEnd` são recalculadas a cada execução). Formatos aceitos: RFC3339, `YYYY-MM-DDTHH:MM[:SS]`, `YYYY-MM-DD HH:MM[:SS]` ou Unix (s/ms).",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"name\": \"Reuniao semanal\",\n  \"description\": \"Alinhamento de sprint\",\n  \"join_link\": \"https://call.whatsapp.com/video/SEU_TOKEN_REAL_AQUI\",\n  \"start_time\": \"2026-04-01T09:00:00\",\n  \"end_time\": \"2026-04-01T10:00:00\",\n  \"call_type\": \"video\",\n  \"force_structured\": true,\n  \"extra_guests_allowed\": true,\n  \"is_schedule_call\": true,\n  \"has_reminder\": true,\n  \"reminder_offset_sec\": 900\n}"
-            },
-            "url": "{{baseUrl}}/api/v1/messages/event"
-          }
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"name\": \"Reunião semanal\",\n  \"description\": \"Alinhamento de sprint\",\n  \"start_time\": \"{{eventStart}}\",\n  \"end_time\": \"{{eventEnd}}\",\n  \"call_type\": \"video\",\n  \"force_structured\": true,\n  \"extra_guests_allowed\": true,\n  \"is_schedule_call\": true,\n  \"has_reminder\": true,\n  \"reminder_offset_sec\": 900\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Envelope de sucesso', () => pm.expect(j.status).to.eql('success'));",
+                  "pm.test('Retorna message_id', () => pm.expect(j.data && j.data.message_id).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Enviar evento voz",
+          "name": "Enviar evento (voz)",
           "request": {
             "method": "POST",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               },
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/messages/event",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "messages",
+                "event"
+              ]
+            },
+            "description": "Evento com chamada de voz. Se `has_reminder=true` e `reminder_offset_sec<=0`, a API assume 900 s.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"name\": \"Reuniao de voz\",\n  \"description\": \"Alinhamento por chamada\",\n  \"join_link\": \"https://call.whatsapp.com/voice/SEU_TOKEN_REAL_AQUI\",\n  \"start_time\": \"2026-04-01T09:00:00\",\n  \"end_time\": \"2026-04-01T10:00:00\",\n  \"call_type\": \"voice\",\n  \"force_structured\": true,\n  \"extra_guests_allowed\": true,\n  \"is_schedule_call\": true,\n  \"has_reminder\": true,\n  \"reminder_offset_sec\": 900\n}"
-            },
-            "url": "{{baseUrl}}/api/v1/messages/event"
-          }
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"name\": \"Ligação de alinhamento\",\n  \"description\": \"Chamada de voz agendada\",\n  \"start_time\": \"{{eventStart}}\",\n  \"end_time\": \"{{eventEnd}}\",\n  \"call_type\": \"voice\",\n  \"extra_guests_allowed\": false,\n  \"is_schedule_call\": true,\n  \"has_reminder\": true,\n  \"reminder_offset_sec\": 600\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Envelope de sucesso', () => pm.expect(j.status).to.eql('success'));",
+                  "pm.test('Retorna message_id', () => pm.expect(j.data && j.data.message_id).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
     {
-      "name": "Historico da Sessao",
+      "name": "Histórico da Sessão",
+      "description": "Consulta ao histórico da sessão autenticada (`X-WhatsApp-Session-Key`). `history` e `conversations` retornam o objeto direto, sem o envelope `status/data`.",
       "item": [
         {
-          "name": "Listar historico",
+          "name": "Listar histórico",
           "request": {
             "method": "GET",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               }
             ],
-            "url": "{{baseUrl}}/api/v1/messages/history?limit=50&offset=0&include_media=false&contact=",
-            "description": "Use include_media=true para receber media_base64. O filtro correto e contact."
-          }
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/messages/history?limit=50&offset=0&include_media=false&contact=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "messages",
+                "history"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                },
+                {
+                  "key": "include_media",
+                  "value": "false"
+                },
+                {
+                  "key": "contact",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Parâmetros: `limit` (padrão 50), `offset`, `contact` (filtra por número; deixe vazio para todos) e `include_media=true` (inclui `media_base64`). Salva `messageID` (e `messageFilename`, se houver mídia) da primeira mensagem."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": []
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"messages\": [],\n  \"pagination\": {\n    \"total\": 0,\n    \"limit\": 50,\n    \"offset\": 0\n  }\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Retorna messages e pagination', () => { pm.expect(j.messages).to.be.an('array'); pm.expect(j.pagination).to.be.an('object'); });",
+                  "const withMedia = (j.messages || []).find(m => m.media_download_url);",
+                  "const first = withMedia || (j.messages || [])[0];",
+                  "if (first) pm.collectionVariables.set('messageID', first.id);",
+                  "if (withMedia) pm.collectionVariables.set('messageFilename', withMedia.media_download_url.split('/').pop());"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Listar contatos",
@@ -395,73 +1013,169 @@
             "method": "GET",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               }
             ],
-            "url": "{{baseUrl}}/api/v1/messages/contacts"
-          }
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/messages/contacts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "messages",
+                "contacts"
+              ]
+            },
+            "description": "Contatos únicos da sessão."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Retorna contatos', () => pm.expect(pm.response.json().data.contacts).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Obter estatisticas",
+          "name": "Obter estatísticas",
           "request": {
             "method": "GET",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               }
             ],
-            "url": "{{baseUrl}}/api/v1/messages/stats"
-          }
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/messages/stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "messages",
+                "stats"
+              ]
+            },
+            "description": "Totais da sessão: `total_messages`, `inbound`, `outbound` e `contact_count`."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Resposta JSON', () => pm.response.to.be.json);"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Baixar midia da mensagem",
+          "name": "Baixar mídia da mensagem",
           "request": {
             "method": "GET",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               }
             ],
-            "url": "{{baseUrl}}/api/v1/messages/{{messageID}}/media/{{messageFilename}}",
-            "description": "O filename pode ser qualquer nome com extensao; a API usa o messageID para localizar o anexo."
-          }
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/messages/{{messageID}}/media/{{messageFilename}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "messages",
+                "{{messageID}}",
+                "media",
+                "{{messageFilename}}"
+              ]
+            },
+            "description": "Faz stream do anexo. Rode **Listar histórico** antes para preencher `messageID` e `messageFilename`."
+          },
+          "response": []
         }
       ]
     },
     {
       "name": "Conversas Administrativas",
+      "description": "Mesmas consultas, por `sessionID` (UUID). Use o header `SESSIONKEY` com a chave do tenant.",
       "item": [
         {
-          "name": "Historico por sessionID",
+          "name": "Histórico por sessionID",
           "request": {
             "method": "GET",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "SESSIONKEY",
-                "value": "{{tenantSessionKey}}"
+                "value": "{{tenantSessionKey}}",
+                "description": "Chave do tenant"
               }
             ],
-            "url": "{{baseUrl}}/api/v1/conversations/{{sessionID}}?limit=50&offset=0&include_media=false&contact="
-          }
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/conversations/{{sessionID}}?limit=50&offset=0&include_media=false&contact=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "conversations",
+                "{{sessionID}}"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                },
+                {
+                  "key": "include_media",
+                  "value": "false"
+                },
+                {
+                  "key": "contact",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Histórico paginado da sessão informada."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Resposta JSON', () => pm.response.to.be.json);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Contatos por sessionID",
@@ -469,38 +1183,85 @@
             "method": "GET",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "SESSIONKEY",
-                "value": "{{tenantSessionKey}}"
+                "value": "{{tenantSessionKey}}",
+                "description": "Chave do tenant"
               }
             ],
-            "url": "{{baseUrl}}/api/v1/conversations/{{sessionID}}/contacts"
-          }
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/conversations/{{sessionID}}/contacts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "conversations",
+                "{{sessionID}}",
+                "contacts"
+              ]
+            },
+            "description": "Contatos únicos da sessão informada."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Resposta JSON', () => pm.response.to.be.json);"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Estatisticas por sessionID",
+          "name": "Estatísticas por sessionID",
           "request": {
             "method": "GET",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "SESSIONKEY",
-                "value": "{{tenantSessionKey}}"
+                "value": "{{tenantSessionKey}}",
+                "description": "Chave do tenant"
               }
             ],
-            "url": "{{baseUrl}}/api/v1/conversations/{{sessionID}}/stats"
-          }
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/conversations/{{sessionID}}/stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "conversations",
+                "{{sessionID}}",
+                "stats"
+              ]
+            },
+            "description": "Estatísticas da sessão informada."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Resposta JSON', () => pm.response.to.be.json);"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
     {
       "name": "Webhooks",
+      "description": "Webhooks por sessão (`X-WhatsApp-Session-Key`). Eventos que disparam webhooks: `message.sent`, `message.received`, `message.read` e `*` (todos). Eventos `session.*` e `message.receipt` existem só no WebSocket.",
       "item": [
         {
           "name": "Registrar webhook",
@@ -508,24 +1269,51 @@
             "method": "POST",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               },
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/webhooks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "webhooks"
+              ]
+            },
+            "description": "Cadastra um webhook. `headers` é opcional e enviado em cada entrega. Salva `webhookId`.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"url\": \"{{webhookUrl}}\",\n  \"events\": [\"message.sent\", \"message.received\", \"message.read\"],\n  \"headers\": {\n    \"Authorization\": \"Bearer token-custom\"\n  }\n}"
-            },
-            "url": "{{baseUrl}}/api/v1/webhooks"
-          }
+              "raw": "{\n  \"url\": \"{{webhookUrl}}\",\n  \"events\": [\n    \"message.sent\",\n    \"message.received\",\n    \"message.read\"\n  ],\n  \"headers\": {\n    \"Authorization\": \"Bearer token-custom\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const j = pm.response.json();",
+                  "if (j.data && j.data.id) pm.collectionVariables.set('webhookId', j.data.id);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Listar webhooks",
@@ -533,16 +1321,39 @@
             "method": "GET",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               }
             ],
-            "url": "{{baseUrl}}/api/v1/webhooks"
-          }
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/webhooks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "webhooks"
+              ]
+            },
+            "description": "Lista os webhooks da sessão."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Retorna lista', () => pm.expect(pm.response.json().data).to.be.an('array'));",
+                  "const w = pm.response.json().data || [];",
+                  "if (w.length && !pm.collectionVariables.get('webhookId')) pm.collectionVariables.set('webhookId', w[0].id);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Obter webhook",
@@ -550,16 +1361,38 @@
             "method": "GET",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               }
             ],
-            "url": "{{baseUrl}}/api/v1/webhooks/{{webhookId}}"
-          }
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/webhooks/{{webhookId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "webhooks",
+                "{{webhookId}}"
+              ]
+            },
+            "description": "Busca um webhook pelo ID."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Resposta JSON', () => pm.response.to.be.json);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Atualizar webhook",
@@ -567,24 +1400,51 @@
             "method": "PUT",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               },
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/webhooks/{{webhookId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "webhooks",
+                "{{webhookId}}"
+              ]
+            },
+            "description": "Atualiza `url`, `events` e `headers` (o corpo é o mesmo do cadastro).",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"url\": \"https://novo-servidor.com/webhook\",\n  \"events\": [\"message.sent\", \"message.received\", \"message.read\"],\n  \"headers\": {\n    \"Authorization\": \"Bearer novo-token\"\n  }\n}"
-            },
-            "url": "{{baseUrl}}/api/v1/webhooks/{{webhookId}}"
-          }
+              "raw": "{\n  \"url\": \"{{webhookUrl}}\",\n  \"events\": [\n    \"*\"\n  ],\n  \"headers\": {\n    \"Authorization\": \"Bearer novo-token\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Resposta JSON', () => pm.response.to.be.json);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Deletar webhook",
@@ -592,16 +1452,38 @@
             "method": "DELETE",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               }
             ],
-            "url": "{{baseUrl}}/api/v1/webhooks/{{webhookId}}"
-          }
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/webhooks/{{webhookId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "webhooks",
+                "{{webhookId}}"
+              ]
+            },
+            "description": "Remove o webhook."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Resposta JSON', () => pm.response.to.be.json);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Logs do webhook",
@@ -609,42 +1491,195 @@
             "method": "GET",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               }
             ],
-            "url": "{{baseUrl}}/api/v1/webhooks/{{webhookId}}/logs?limit=50"
-          }
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/webhooks/{{webhookId}}/logs?limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "webhooks",
+                "{{webhookId}}",
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Entregas recentes: `http_status`, `execution_time_ms`, `payload`, `response_body` e `error_message`."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Resposta JSON', () => pm.response.to.be.json);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Versão do WhatsApp Web",
+      "description": "A API atualiza a versão do cliente sozinha (na inicialização, a cada hora e ao receber o erro 405). Use esta rota para forçar a atualização.",
+      "item": [
+        {
+          "name": "Forçar atualização da versão",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "SESSIONKEY",
+                "value": "{{tenantSessionKey}}",
+                "description": "Chave do tenant"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/version/refresh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "version",
+                "refresh"
+              ]
+            },
+            "description": "Busca a versão mais recente em web.whatsapp.com e passa a usá-la nas próximas conexões."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": []
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": \"success\",\n  \"message\": \"Versão do WhatsApp Web atualizada\",\n  \"data\": {\n    \"version\": \"2.3000.1054981628\"\n  }\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Retorna a versão', () => pm.expect(pm.response.json().data.version).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
     {
       "name": "Tempo Real",
+      "description": "Crie uma requisição **WebSocket** no Postman (New → WebSocket) e use as URLs abaixo. Eventos: `ws.connected`, `session.connected`, `session.disconnected`, `session.logged_out`, `session.client_outdated`, `message.sent`, `message.received`, `message.receipt`.",
       "item": [
         {
-          "name": "WebSocket da sessao",
+          "name": "WebSocket da sessão",
           "request": {
             "method": "GET",
-            "url": "{{wsBaseUrl}}/api/v1/ws?apitoken={{apiToken}}&session_key={{waSessionKey}}&whatsapp_session_key={{waSessionKey}}&scopes={{wsScopes}}",
-            "description": "Use no cliente WebSocket do Postman. Eventos: ws.connected, session.connected, session.disconnected, session.logged_out, message.sent, message.received, message.receipt."
-          }
+            "header": [],
+            "url": {
+              "raw": "{{wsBaseUrl}}/api/v1/ws?apitoken={{apiToken}}&session_key={{waSessionKey}}&whatsapp_session_key={{waSessionKey}}&scopes={{wsScopes}}",
+              "host": [
+                "{{wsBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "ws"
+              ],
+              "query": [
+                {
+                  "key": "apitoken",
+                  "value": "{{apiToken}}"
+                },
+                {
+                  "key": "session_key",
+                  "value": "{{waSessionKey}}"
+                },
+                {
+                  "key": "whatsapp_session_key",
+                  "value": "{{waSessionKey}}"
+                },
+                {
+                  "key": "scopes",
+                  "value": "{{wsScopes}}"
+                }
+              ]
+            },
+            "description": "Escuta a sessão e escopos extras (`scopes`, separados por vírgula)."
+          },
+          "response": []
         },
         {
           "name": "WebSocket apenas pelo escopo principal",
           "request": {
             "method": "GET",
-            "url": "{{wsBaseUrl}}/api/v1/ws?apitoken={{apiToken}}&session_key={{waSessionKey}}",
-            "description": "Conexao simplificada usando somente o escopo principal da sessao."
-          }
+            "header": [],
+            "url": {
+              "raw": "{{wsBaseUrl}}/api/v1/ws?apitoken={{apiToken}}&session_key={{waSessionKey}}",
+              "host": [
+                "{{wsBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "ws"
+              ],
+              "query": [
+                {
+                  "key": "apitoken",
+                  "value": "{{apiToken}}"
+                },
+                {
+                  "key": "session_key",
+                  "value": "{{waSessionKey}}"
+                }
+              ]
+            },
+            "description": "Escuta apenas o escopo da chave informada."
+          },
+          "response": []
         }
       ]
     },
     {
       "name": "Aliases Legados",
+      "description": "Rotas antigas mantidas por compatibilidade.",
       "item": [
         {
           "name": "sendText",
@@ -652,24 +1687,52 @@
             "method": "POST",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               },
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sendText",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sendText"
+              ]
+            },
+            "description": "Alias legado de `/api/v1/messages/text`.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"text\": \"Ola pelo alias\"\n}"
-            },
-            "url": "{{baseUrl}}/api/v1/sendText"
-          }
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"text\": \"Olá (rota legada)\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Envelope de sucesso', () => pm.expect(j.status).to.eql('success'));",
+                  "pm.test('Retorna message_id', () => pm.expect(j.data && j.data.message_id).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "sendMedia",
@@ -677,24 +1740,52 @@
             "method": "POST",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               },
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sendMedia",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sendMedia"
+              ]
+            },
+            "description": "Alias legado de `/api/v1/messages/media`.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"caption\": \"Arquivo via alias\",\n  \"media_url\": \"https://picsum.photos/800/600\"\n}"
-            },
-            "url": "{{baseUrl}}/api/v1/sendMedia"
-          }
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"caption\": \"Arquivo\",\n  \"media_url\": \"https://example.com/arquivo.pdf\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Envelope de sucesso', () => pm.expect(j.status).to.eql('success'));",
+                  "pm.test('Retorna message_id', () => pm.expect(j.data && j.data.message_id).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "sendAudio",
@@ -702,24 +1793,52 @@
             "method": "POST",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               },
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sendAudio",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sendAudio"
+              ]
+            },
+            "description": "Alias legado de `/api/v1/messages/audio`.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"media_url\": \"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3\",\n  \"mime_type\": \"audio/mpeg\",\n  \"ptt\": false\n}"
-            },
-            "url": "{{baseUrl}}/api/v1/sendAudio"
-          }
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"media_url\": \"https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3\",\n  \"mime_type\": \"audio/mpeg\",\n  \"ptt\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Envelope de sucesso', () => pm.expect(j.status).to.eql('success'));",
+                  "pm.test('Retorna message_id', () => pm.expect(j.data && j.data.message_id).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "sendVideo",
@@ -727,24 +1846,52 @@
             "method": "POST",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               },
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sendVideo",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sendVideo"
+              ]
+            },
+            "description": "Alias legado de `/api/v1/messages/video`.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"caption\": \"Video via alias\",\n  \"media_url\": \"https://samplelib.com/lib/preview/mp4/sample-5s.mp4\",\n  \"mime_type\": \"video/mp4\",\n  \"gif_playback\": false\n}"
-            },
-            "url": "{{baseUrl}}/api/v1/sendVideo"
-          }
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"caption\": \"Vídeo\",\n  \"media_url\": \"https://samplelib.com/lib/preview/mp4/sample-5s.mp4\",\n  \"mime_type\": \"video/mp4\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Envelope de sucesso', () => pm.expect(j.status).to.eql('success'));",
+                  "pm.test('Retorna message_id', () => pm.expect(j.data && j.data.message_id).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "sendPoll",
@@ -752,24 +1899,52 @@
             "method": "POST",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               },
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sendPoll",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sendPoll"
+              ]
+            },
+            "description": "Alias legado de `/api/v1/messages/poll`.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"question\": \"Enquete via alias\",\n  \"options\": [\"Sim\", \"Nao\"],\n  \"selectable_options_count\": 1\n}"
-            },
-            "url": "{{baseUrl}}/api/v1/sendPoll"
-          }
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"question\": \"Qual opção?\",\n  \"options\": [\n    \"A\",\n    \"B\"\n  ],\n  \"selectable_options_count\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Envelope de sucesso', () => pm.expect(j.status).to.eql('success'));",
+                  "pm.test('Retorna message_id', () => pm.expect(j.data && j.data.message_id).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "sendEvent",
@@ -777,24 +1952,52 @@
             "method": "POST",
             "header": [
               {
-                "key": "apitoken",
-                "value": "{{apiToken}}"
-              },
-              {
                 "key": "X-WhatsApp-Session-Key",
-                "value": "{{waSessionKey}}"
+                "value": "{{waSessionKey}}",
+                "description": "whatsappSessionKey da sessão"
               },
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sendEvent",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sendEvent"
+              ]
+            },
+            "description": "Alias legado de `/api/v1/messages/event`.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"name\": \"Evento via alias\",\n  \"description\": \"Teste do alias legado\",\n  \"join_link\": \"https://call.whatsapp.com/video/SEU_TOKEN_REAL_AQUI\",\n  \"start_time\": \"2026-04-01T09:00:00\",\n  \"end_time\": \"2026-04-01T10:00:00\",\n  \"call_type\": \"video\",\n  \"force_structured\": true,\n  \"extra_guests_allowed\": true,\n  \"is_schedule_call\": true,\n  \"has_reminder\": true,\n  \"reminder_offset_sec\": 900\n}"
-            },
-            "url": "{{baseUrl}}/api/v1/sendEvent"
-          }
+              "raw": "{\n  \"number\": \"{{phoneNumber}}\",\n  \"name\": \"Reunião\",\n  \"start_time\": \"{{eventStart}}\",\n  \"call_type\": \"video\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Envelope de sucesso', () => pm.expect(j.status).to.eql('success'));",
+                  "pm.test('Retorna message_id', () => pm.expect(j.data && j.data.message_id).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
         }
       ]
     }
