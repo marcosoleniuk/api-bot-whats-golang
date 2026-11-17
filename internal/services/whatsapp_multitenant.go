@@ -155,6 +155,7 @@ type MultiTenantWhatsAppService struct {
 	currentWAVersion   string
 	waVersionMu        sync.RWMutex
 	versionRefreshStop chan struct{}
+	lastOutdatedFix    time.Time
 }
 
 type pendingEventFallback struct {
@@ -216,8 +217,15 @@ func NewMultiTenantWhatsAppService(cfg *config.Config, db *sql.DB, log *logger.L
 
 	// Fetch the latest WhatsApp Web version at startup
 	initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	if err := service.RefreshWAVersion(initCtx); err != nil {
-		log.Warnf("Falha ao obter versão mais recente do WhatsApp Web no startup: %v", err)
+	for attempt := 1; attempt <= 3; attempt++ {
+		err := service.RefreshWAVersion(initCtx)
+		if err == nil {
+			break
+		}
+		log.Warnf("Falha ao obter versão mais recente do WhatsApp Web no startup (tentativa %d/3): %v", attempt, err)
+		if attempt < 3 {
+			time.Sleep(2 * time.Second)
+		}
 	}
 	initCancel()
 
@@ -681,11 +689,12 @@ func (s *MultiTenantWhatsAppService) registerEventHandlers(client *whatsmeow.Cli
 			s.publishRealtimeEvent(session, "message.received", realtimeData)
 
 		case *events.ClientOutdated:
-			s.logger.Errorf("[%s] Versão do cliente WhatsApp desatualizada - será necessário atualizar a biblioteca whatsmeow", session.WhatsAppSessionKey)
+			s.logger.Errorf("[%s] Versão do cliente WhatsApp desatualizada (405) - buscando versão mais recente automaticamente", session.WhatsAppSessionKey)
 			s.publishRealtimeEvent(session, "session.client_outdated", map[string]interface{}{
 				"status":  models.SessionStatusDisconnected,
-				"message": "Client version outdated, library update required",
+				"message": "Client version outdated, refreshing version automatically",
 			})
+			go s.handleClientOutdated(session.WhatsAppSessionKey)
 
 		default:
 			s.logger.Infof("[%s] Evento desconhecido recebido: %T", session.WhatsAppSessionKey, evt)
@@ -1064,14 +1073,25 @@ func (s *MultiTenantWhatsAppService) downloadInboundMedia(client *whatsmeow.Clie
 }
 
 func (s *MultiTenantWhatsAppService) reconnectSession(session *models.WhatsAppSession) error {
-	if session.PhoneNumber == nil || *session.PhoneNumber == "" {
-		return fmt.Errorf("sessão não pode ser reconectada: phone_number ausente")
-	}
-
 	ctx := context.Background()
 
 	var deviceStore *store.Device
 	var err error
+
+	// Sem phone_number/device_jid no banco, usa o JID do dispositivo já carregado em memória.
+	hasPhone := session.PhoneNumber != nil && *session.PhoneNumber != ""
+	hasDeviceJID := session.DeviceJID != nil && *session.DeviceJID != ""
+	if !hasPhone && !hasDeviceJID {
+		if existing, ok := s.clients.Get(session.WhatsAppSessionKey); ok && existing != nil &&
+			existing.Client != nil && existing.Client.Store != nil && existing.Client.Store.ID != nil {
+			jidStr := existing.Client.Store.ID.String()
+			session.DeviceJID = &jidStr
+			hasDeviceJID = true
+		}
+	}
+	if !hasPhone && !hasDeviceJID {
+		return fmt.Errorf("sessão não pode ser reconectada: phone_number ausente")
+	}
 
 	if session.DeviceJID != nil && *session.DeviceJID != "" {
 		if jid, parseErr := types.ParseJID(*session.DeviceJID); parseErr == nil {
@@ -1082,7 +1102,7 @@ func (s *MultiTenantWhatsAppService) reconnectSession(session *models.WhatsAppSe
 		}
 	}
 
-	if deviceStore == nil || deviceStore.ID == nil {
+	if (deviceStore == nil || deviceStore.ID == nil) && hasPhone {
 		jid, parseErr := types.ParseJID(*session.PhoneNumber + "@s.whatsapp.net")
 		if parseErr != nil {
 			return fmt.Errorf("falha ao parse JID: %w", parseErr)
@@ -2337,10 +2357,51 @@ func (s *MultiTenantWhatsAppService) RefreshWAVersion(ctx context.Context) error
 	return nil
 }
 
+// handleClientOutdated reage ao erro 405: busca a versão mais recente (com novas
+// tentativas) e reconecta a sessão afetada. Protegido contra rajadas (1x/minuto).
+func (s *MultiTenantWhatsAppService) handleClientOutdated(sessionKey string) {
+	s.waVersionMu.Lock()
+	if time.Since(s.lastOutdatedFix) < time.Minute {
+		s.waVersionMu.Unlock()
+		return
+	}
+	s.lastOutdatedFix = time.Now()
+	s.waVersionMu.Unlock()
+
+	before := store.GetWAVersion()
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		lastErr = s.RefreshWAVersion(ctx)
+		cancel()
+		if lastErr == nil {
+			break
+		}
+		time.Sleep(time.Duration(attempt) * 5 * time.Second)
+	}
+	if lastErr != nil {
+		s.logger.Errorf("[%s] Não foi possível atualizar a versão após 405: %v", sessionKey, lastErr)
+		return
+	}
+	if after := store.GetWAVersion(); after == before {
+		s.logger.Warnf("[%s] Versão do WhatsApp Web não mudou (%s) - o 405 pode exigir atualização da biblioteca whatsmeow", sessionKey, after.String())
+		return
+	}
+
+	// O monitor de conexão reconecta as sessões pareadas; aqui reconectamos a afetada imediatamente.
+	if waClient, ok := s.clients.Get(sessionKey); ok && waClient != nil && waClient.Session != nil &&
+		waClient.Client != nil && !waClient.Client.IsConnected() &&
+		waClient.Client.Store != nil && waClient.Client.Store.ID != nil {
+		if err := s.reconnectSession(waClient.Session); err != nil {
+			s.logger.Errorf("[%s] Falha ao reconectar após atualizar versão: %v", sessionKey, err)
+		}
+	}
+}
+
 // StartVersionRefresh runs a background goroutine that periodically refreshes
 // the WhatsApp Web version to keep it in sync with the official client.
 func (s *MultiTenantWhatsAppService) StartVersionRefresh(ctx context.Context) {
-	const refreshInterval = 6 * time.Hour
+	const refreshInterval = 1 * time.Hour
 
 	s.versionRefreshStop = make(chan struct{})
 
